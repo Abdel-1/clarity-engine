@@ -5,16 +5,18 @@ from app.services.tasks import process_document
 
 router = APIRouter()
 
+
 @router.post("/upload")
 def upload_file(file: UploadFile = File(...)):
 
-    # Save file
+    # 1. Save file to disk
     file_path = save_file(file)
 
-    # SEND TO BACKGROUND WORKER (NOT blocking)
-    task = process_document.delay(file_path)
+    # 2. Dispatch async Celery task
+    task = process_document.delay(str(file_path))
 
     return {
-        "message": "File uploaded successfully",
-        "task_id": task.id
+        "task_id": task.id,
+        "filename": file.filename,
+        "message": "File uploaded — analysis running in background",
     }

@@ -19,6 +19,7 @@ if config.config_file_name is not None:
 from app.db.base import Base
 from app.db.models.user import User
 from app.db.models.document import Document
+from app.db.models.analysis_result import AnalysisResult
 
 target_metadata = Base.metadata
 

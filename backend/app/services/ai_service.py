@@ -1,23 +1,39 @@
+import json
 from app.services.groq_provider import GroqProvider
 
 class AIService:
 
     def __init__(self):
-        # Now AI is independent of provider
         self.llm = GroqProvider()
 
     def summarize_text(self, text: str):
 
         prompt = f"""
-        Analyze this document and return:
+Return ONLY valid JSON with this exact format:
 
-        1. Summary
-        2. Key points
-        3. Entities (people, concepts, places)
-        4. Risks / decisions
+{{
+  "summary": "short summary",
+  "entities": ["entity1", "entity2"],
+  "risks": ["risk1"],
+  "decisions": ["decision1"]
+}}
 
-        Document:
-        {text}
-        """
+Analyze this document:
 
-        return self.llm.generate(prompt)
+{text}
+"""
+
+        result = self.llm.generate(prompt)
+
+        # Clean markdown code blocks if the LLM adds them
+        if result.startswith("```json"):
+            result = result[7:]
+        if result.endswith("```"):
+            result = result[:-3]
+        result = result.strip()
+
+        try:
+            return json.loads(result)
+        except json.JSONDecodeError:
+            print("Failed to parse JSON. Raw result:", result)
+            return {"summary": "Error parsing JSON", "entities": [], "risks": [], "decisions": []}
