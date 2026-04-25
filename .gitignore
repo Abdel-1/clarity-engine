@@ -44,3 +44,5 @@ uploads/
 # Logs
 logs/
 *.log
+# Scratch Files
+scratch_test_*

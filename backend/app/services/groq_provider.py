@@ -10,7 +10,7 @@ class GroqProvider(LLMProvider):
     def generate(self, prompt: str) -> str:
         try:
             response = self.client.chat.completions.create(
-                model="llama3-70b-8192",  # powerful free model
+                model="llama-3.1-8b-instant",  # Updated to supported model
                 messages=[
                     {"role": "system", "content": "You are a professional document analyst."},
                     {"role": "user", "content": prompt}
