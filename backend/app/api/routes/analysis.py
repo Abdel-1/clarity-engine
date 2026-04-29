@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.core.dependencies.db import get_db
 from app.db.models.analyses import Analysis
 from app.db.models.brand_system import BrandSystem
-from app.services.brand_analysis_service import analyze_message
+from app.services.brand_analysis_service import analyze_message, rewrite_message
 
 router = APIRouter()
 
@@ -24,6 +24,31 @@ class AnalyzeRequest(BaseModel):
     content_type:     Optional[str] = None
     author:           Optional[str] = None
     campaign:         Optional[str] = None
+
+
+class RewriteRequest(BaseModel):
+    brand_system_id:  int
+    original_message: str
+    instruction:      str
+    points_faibles:   list[str] = []
+    recommandations:  list[str] = []
+
+
+@router.post("/rewrite")
+def run_rewrite(payload: RewriteRequest, db: Session = Depends(get_db)):
+    bs = db.query(BrandSystem).filter(BrandSystem.id == payload.brand_system_id).first()
+    if not bs:
+        raise HTTPException(status_code=404, detail="Brand system not found")
+    try:
+        result = rewrite_message(
+            bs,
+            payload.original_message,
+            payload.instruction,
+            {"points_faibles": payload.points_faibles, "recommandations": payload.recommandations}
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/analyze", status_code=201)

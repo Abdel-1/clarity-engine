@@ -46,3 +46,36 @@ export async function getStats() {
   const r = await fetch(`${API}/analyses/stats`);
   return r.json();
 }
+export async function postRewrite(payload: {
+  brand_system_id: number;
+  original_message: string;
+  instruction: string;
+  points_faibles?: string[];
+  recommandations?: string[];
+}) {
+  const r = await fetch(`${API}/rewrite`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<{ rewritten_message: string; changes_made: string[] }>;
+}
+
+export async function importBrandFromFiles(files: File[]): Promise<{
+  status: string;
+  sources: string[];
+  char_count: number;
+  errors: string[];
+  data: Record<string, string>;
+}> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const r = await fetch(`${API}/brand-systems/import`, { method: "POST", body: form });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(err.detail || "Upload failed");
+  }
+  return r.json();
+}
+
+

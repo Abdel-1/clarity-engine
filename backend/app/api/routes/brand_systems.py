@@ -1,12 +1,15 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from app.core.dependencies.db import get_db
 from app.db.models.brand_system import BrandSystem
 from app.db.models.client import Client
+from app.services.document_extractor import extract_text
+from app.services.brand_extractor_service import extract_brand_fields
 
 router = APIRouter()
 
@@ -40,6 +43,57 @@ def create_brand_system(payload: BrandSystemCreate, db: Session = Depends(get_db
     bs = BrandSystem(client_id=client_id, **payload.dict())
     db.add(bs); db.commit(); db.refresh(bs)
     return {"id": bs.id, "brand_name": bs.brand_name, "version": bs.version}
+
+
+@router.post("/brand-systems/import")
+async def import_brand_system(
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    """Upload brand documents → extract text → AI parses brand fields → return for review."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    extracted_parts = []
+    file_names = []
+    errors = []
+
+    for f in files:
+        content = await f.read()
+        if not content:
+            errors.append(f"{f.filename}: empty file")
+            continue
+        try:
+            text = extract_text(f.filename or "file", content)
+            if text.strip():
+                extracted_parts.append(f"=== {f.filename} ===\n{text}")
+                file_names.append(f.filename)
+            else:
+                errors.append(f"{f.filename}: no text could be extracted")
+        except ValueError as e:
+            errors.append(f"{f.filename}: {str(e)}")
+
+    if not extracted_parts:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No text could be extracted from the uploaded files. {'; '.join(errors)}"
+        )
+
+    combined = "\n\n".join(extracted_parts)
+    char_count = len(combined)
+
+    try:
+        brand_data = extract_brand_fields(combined)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "status": "extracted",
+        "sources": file_names,
+        "char_count": char_count,
+        "errors": errors,
+        "data": brand_data,
+    }
 
 
 @router.get("/brand-systems")

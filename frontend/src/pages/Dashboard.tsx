@@ -10,10 +10,11 @@ const RISK_CLASS: Record<string,string> = { Low:"risk-low", Medium:"risk-medium"
 const scoreClass = (s: number) => s >= 75 ? "score-green" : s >= 50 ? "score-amber" : "score-red";
 
 const NAV = [
-  { path:"/",                 label:"Dashboard" },
-  { path:"/analyze",          label:"Analyser" },
-  { path:"/brand-system/new", label:"Brand Systems" },
-  { path:"/history",          label:"Historique" },
+  { path: "/",                    label: "Dashboard" },
+  { path: "/analyze",             label: "Analyser" },
+  { path: "/brand-system/new",    label: "Brand Systems" },
+  { path: "/brand-system/import", label: "Importer un Brand" },
+  { path: "/history",             label: "Historique" },
 ];
 
 export default function Dashboard() {

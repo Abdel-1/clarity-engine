@@ -103,6 +103,7 @@ def _validate(result: dict) -> None:
         raise ValueError(f"LLM subscores missing: {missing_sub}")
 
 
+
 def analyze_message(brand_system, message: str, metadata: dict) -> dict:
     """Core brand analysis engine. Calls Groq, validates, returns parsed result."""
     groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -118,3 +119,73 @@ def analyze_message(brand_system, message: str, metadata: dict) -> dict:
 
     _validate(result)
     return result
+
+
+REWRITE_SYSTEM_PROMPT = """You are an expert brand copywriter working for a specific brand.
+You receive a message that was analyzed against a Brand System, along with identified weaknesses and recommendations.
+Your job is to rewrite or improve the message according to the user's instruction while strictly following the Brand System guidelines.
+
+Rules:
+- Fix the weaknesses identified in the analysis
+- Apply the user's specific instruction (improve tone, make shorter, make more impactful, etc.)
+- Respect the brand's tone, red lines, preferred vocabulary
+- Keep the same core meaning and intent
+- Do NOT add generic filler — every sentence must earn its place
+- Match the same language as the original message
+
+Return ONLY valid JSON, no markdown, no backticks:
+{
+  "rewritten_message": "the full rewritten text",
+  "changes_made": ["brief description of change 1", "brief description of change 2", ...]
+}"""
+
+
+def rewrite_message(brand_system, original_message: str, instruction: str, feedback: dict) -> dict:
+    """Rewrite a message based on brand system + analysis feedback + user instruction."""
+    groq_client = Groq(api_key=settings.GROQ_API_KEY)
+
+    points_faibles   = "\n".join(f"- {p}" for p in feedback.get("points_faibles", []))
+    recommandations  = "\n".join(f"- {r}" for r in feedback.get("recommandations", []))
+
+    user_content = f"""=== BRAND SYSTEM ===
+Brand Name: {brand_system.brand_name}
+Brand Role: {brand_system.brand_role}
+Master Statement: {brand_system.master_statement}
+Tone: {brand_system.tone}
+Red Lines: {brand_system.red_lines}
+Preferred Words: {brand_system.words_preferred or 'N/A'}
+Words to Avoid: {brand_system.words_avoid or 'N/A'}
+
+=== ORIGINAL MESSAGE ===
+{original_message}
+
+=== ANALYSIS FEEDBACK ===
+Weaknesses identified:
+{points_faibles or 'None'}
+
+Recommendations:
+{recommandations or 'None'}
+
+=== USER INSTRUCTION ===
+{instruction}
+
+Rewrite the message now. Fix the weaknesses and follow the instruction. Return JSON only."""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_content},
+            ]
+        )
+        raw = response.choices[0].message.content
+        result = json.loads(raw)
+        if "rewritten_message" not in result:
+            raise ValueError("Missing rewritten_message field")
+        return result
+    except Exception as e:
+        raise ValueError(f"Rewrite failed: {str(e)}")
+
