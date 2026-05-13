@@ -2,15 +2,34 @@ import json
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import Optional
 
 from app.core.dependencies.db import get_db
+from app.core.dependencies.auth import require_client
+from app.core.security import decode_token
+from app.db.models.user import User, ROLE_ADMIN
 from app.db.models.analyses import Analysis
 from app.db.models.brand_system import BrandSystem
 from app.services.brand_analysis_service import analyze_message, rewrite_message
 
 router = APIRouter()
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+def _get_optional_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Decode token if present; return None if missing or invalid."""
+    if not creds:
+        return None
+    payload = decode_token(creds.credentials)
+    if not payload or "user_id" not in payload:
+        return None
+    return db.query(User).filter(User.id == payload["user_id"]).first()
 
 
 class AnalyzeRequest(BaseModel):
@@ -36,7 +55,11 @@ class RewriteRequest(BaseModel):
 
 
 @router.post("/analyze", status_code=201)
-def run_analysis(payload: AnalyzeRequest, db: Session = Depends(get_db)):
+def run_analysis(
+    payload: AnalyzeRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(_get_optional_user),
+):
     bs = db.query(BrandSystem).filter(BrandSystem.id == payload.brand_system_id).first()
     if not bs:
         raise HTTPException(status_code=404, detail="Brand system not found")
@@ -62,6 +85,7 @@ def run_analysis(payload: AnalyzeRequest, db: Session = Depends(get_db)):
         content_type=payload.content_type,
         author=payload.author,
         campaign=payload.campaign,
+        analyzed_by=current_user.email if current_user else (payload.author or None),
         clarity_score=result["clarity_score"],
         sub_clarity=sub["clarity"],
         sub_alignment=sub["alignment"],

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getToken, logout } from "../../services/auth";
 import logoSvg from "../../assets/logo.svg";
@@ -41,6 +41,15 @@ export default function ClientDetails() {
   // Brand system edit state
   const [bsForm, setBsForm] = useState<Record<string, string>>({});
 
+  // Brand admin form state
+  const [showBrandAdminForm, setShowBrandAdminForm] = useState(false);
+  const [baEmail,    setBaEmail]    = useState("");
+  const [baPassword, setBaPassword] = useState("");
+  const [baFullName, setBaFullName] = useState("");
+  const [baSaving,   setBaSaving]   = useState(false);
+  const [baError,    setBaError]    = useState("");
+  const [baSuccess,  setBaSuccess]  = useState("");
+
   useEffect(() => { loadClient(); }, [id]);
 
   async function loadClient() {
@@ -49,6 +58,7 @@ export default function ClientDetails() {
       const r = await fetch(`${API}/api/admin/clients/${id}`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
+      if (r.status === 401) { logout(); window.location.href = "/login"; return; }
       if (!r.ok) throw new Error("Failed to load client details");
       const data = await r.json();
       setClient(data);
@@ -112,6 +122,26 @@ export default function ClientDetails() {
       if (!r.ok) throw new Error("Delete failed");
       loadClient();
     } catch (err: any) { setError(err.message); setLoading(false); }
+  }
+
+  async function handleCreateBrandAdmin(e: FormEvent) {
+    e.preventDefault();
+    setBaSaving(true); setBaError(""); setBaSuccess("");
+    try {
+      const r = await fetch(`${API}/api/admin/clients/${id}/brand-admins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ email: baEmail, password: baPassword, full_name: baFullName }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to create brand admin");
+      }
+      setBaSuccess(`Brand admin ${baEmail} created!`);
+      setBaEmail(""); setBaPassword(""); setBaFullName("");
+      loadClient();
+    } catch (err: any) { setBaError(err.message); }
+    finally { setBaSaving(false); }
   }
 
   const startEditBS = (bs: any) => {
@@ -190,7 +220,41 @@ export default function ClientDetails() {
 
           {/* Users List */}
           <div className="result-card" style={{ marginBottom: 32, background: "rgba(255,255,255,0.03)" }}>
-            <h2 style={{ color: "#fff", fontSize: 18, marginBottom: 16 }}>User Accounts</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ color: "#fff", fontSize: 18 }}>User Accounts</h2>
+              <button
+                id="btn-add-brand-admin"
+                style={{ padding: "6px 14px", borderRadius: 8, background: "rgba(46,200,140,0.1)", border: "1px solid rgba(46,200,140,0.3)", color: "#2ec88c", fontFamily: "inherit", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
+                onClick={() => setShowBrandAdminForm(v => !v)}>
+                {showBrandAdminForm ? "✕ Cancel" : "+ Brand Admin"}
+              </button>
+            </div>
+
+            {showBrandAdminForm && (
+              <form onSubmit={handleCreateBrandAdmin} style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20, padding: 16, background: "rgba(46,200,140,0.04)", border: "1px solid rgba(46,200,140,0.15)", borderRadius: 10 }}>
+                <p style={{ fontSize: 12, color: "rgba(46,200,140,0.7)", fontWeight: 600, margin: 0, textTransform: "uppercase", letterSpacing: "0.5px" }}>New Brand Admin</p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label className="form-label">Full Name</label>
+                    <input className="form-input" value={baFullName} onChange={e => setBaFullName(e.target.value)} placeholder="Jane Smith" />
+                  </div>
+                  <div>
+                    <label className="form-label">Email *</label>
+                    <input className="form-input" type="email" value={baEmail} onChange={e => setBaEmail(e.target.value)} placeholder="jane@brand.com" required />
+                  </div>
+                  <div>
+                    <label className="form-label">Password *</label>
+                    <input className="form-input" type="password" value={baPassword} onChange={e => setBaPassword(e.target.value)} placeholder="Min 6 chars" required minLength={6} />
+                  </div>
+                </div>
+                {baError   && <p style={{ color: "#c0392b", fontSize: 12, margin: 0 }}>{baError}</p>}
+                {baSuccess && <p style={{ color: "#2ec88c", fontSize: 12, margin: 0 }}>{baSuccess}</p>}
+                <button type="submit" disabled={baSaving} style={{ alignSelf: "flex-start", padding: "8px 20px", borderRadius: 8, background: "#2ec88c", border: "none", color: "#0d1520", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: baSaving ? "not-allowed" : "pointer", opacity: baSaving ? 0.6 : 1 }}>
+                  {baSaving ? "Creating…" : "Create Brand Admin"}
+                </button>
+              </form>
+            )}
+
             <table className="doc-table">
               <thead>
                 <tr><th>Name</th><th>Email</th><th>Role</th></tr>
@@ -200,12 +264,22 @@ export default function ClientDetails() {
                   <tr key={u.id}>
                     <td style={{ color: "#fff" }}>{u.full_name || "—"}</td>
                     <td style={{ color: "rgba(255,255,255,0.6)" }}>{u.email}</td>
-                    <td><span className="risk-badge" style={{ background: "rgba(255,255,255,0.1)", color: "#fff" }}>{u.role}</span></td>
+                    <td>
+                      <span className="risk-badge" style={{
+                        background: u.role === "brand_admin"
+                          ? "rgba(46,200,140,0.15)"
+                          : "rgba(255,255,255,0.1)",
+                        color: u.role === "brand_admin" ? "#2ec88c" : "#fff",
+                      }}>
+                        {u.role}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
 
           {/* Brand Systems List */}
           <h2 style={{ color: "#fff", fontSize: 20, marginBottom: 16 }}>Brand Systems</h2>

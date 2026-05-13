@@ -87,15 +87,15 @@ export default function AdminAnalytics() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/api/admin/stats`,    { headers: tok }).then(r => r.json()),
-      fetch(`${API}/api/admin/analyses`, { headers: tok }).then(r => r.json()),
-      fetch(`${API}/api/admin/clients`,  { headers: tok }).then(r => r.json()),
+      fetch(`${API}/api/admin/stats`,    { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
+      fetch(`${API}/api/admin/analyses`, { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
+      fetch(`${API}/api/admin/clients`,  { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
     ])
       .then(([s, a, c]) => {
-        setStats(s);
-        setAnalyses(a);
+        setStats(s && !s.detail ? s : null);
+        setAnalyses(Array.isArray(a) ? a : []);
         const map: Record<number, string> = {};
-        (c as any[]).forEach((cl: any) => { map[cl.id] = cl.company_name; });
+        if (Array.isArray(c)) c.forEach((cl: any) => { map[cl.id] = cl.company_name; });
         setClients(map);
       })
       .catch(e => setError(e.message))

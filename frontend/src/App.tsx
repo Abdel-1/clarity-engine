@@ -1,15 +1,26 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import ProtectedRoute     from "./components/ProtectedRoute";
-import Login              from "./pages/Login";
-import Dashboard          from "./pages/Dashboard";
-import Analyze            from "./pages/Analyze";
-import AnalysisResult     from "./pages/AnalysisResult";
-import BrandSystemNew     from "./pages/BrandSystemNew";
-import BrandSystemEdit    from "./pages/BrandSystemEdit";
-import BrandSystemImport  from "./pages/BrandSystemImport";
-import AdminDashboard     from "./pages/AdminDashboard";
-import AdminClientDetail  from "./pages/AdminClientDetail";
-import History            from "./pages/History";
+import ProtectedRoute    from "./components/ProtectedRoute";
+import AdminRoute        from "./components/AdminRoute";
+import BrandAdminRoute   from "./components/BrandAdminRoute";
+import Login             from "./pages/Login";
+import Dashboard         from "./pages/Dashboard";
+import Analyze           from "./pages/Analyze";
+import AnalysisResult    from "./pages/AnalysisResult";
+import History           from "./pages/History";
+import ClientList        from "./pages/admin/ClientList";
+import ClientCreate      from "./pages/admin/ClientCreate";
+import ClientDetails     from "./pages/admin/ClientDetails";
+import AdminAnalytics    from "./pages/admin/AdminAnalytics";
+import BrandDashboard    from "./pages/brand/BrandDashboard";
+import BrandUsers        from "./pages/brand/BrandUsers";
+import { isAdmin, isBrandAdmin } from "./services/auth";
+
+/** Role-aware catch-all redirect */
+function RoleRedirect() {
+  if (isAdmin())      return <Navigate to="/admin/clients"   replace />;
+  if (isBrandAdmin()) return <Navigate to="/brand/dashboard" replace />;
+  return <Navigate to="/" replace />;
+}
 
 function App() {
   return (
@@ -17,17 +28,23 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
 
-        <Route path="/"                    element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/analyze"             element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
-        <Route path="/analysis/:id"        element={<ProtectedRoute><AnalysisResult /></ProtectedRoute>} />
-        <Route path="/brand-system/new"    element={<ProtectedRoute><BrandSystemNew /></ProtectedRoute>} />
-        <Route path="/brand-system/import" element={<ProtectedRoute><BrandSystemImport /></ProtectedRoute>} />
-        <Route path="/brand-system/:id/edit" element={<ProtectedRoute><BrandSystemEdit /></ProtectedRoute>} />
-        <Route path="/history"             element={<ProtectedRoute><History /></ProtectedRoute>} />
-        <Route path="/admin"                    element={<ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>} />
-        <Route path="/admin/clients/:clientId"  element={<ProtectedRoute adminOnly><AdminClientDetail /></ProtectedRoute>} />
+        {/* ── Client Panel ── */}
+        <Route path="/"             element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/analyze"      element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
+        <Route path="/analysis/:id" element={<ProtectedRoute><AnalysisResult /></ProtectedRoute>} />
+        <Route path="/history"      element={<ProtectedRoute><History /></ProtectedRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* ── Brand Admin Panel ── */}
+        <Route path="/brand/dashboard" element={<BrandAdminRoute><BrandDashboard /></BrandAdminRoute>} />
+        <Route path="/brand/users"     element={<BrandAdminRoute><BrandUsers /></BrandAdminRoute>} />
+
+        {/* ── Super Admin Panel ── */}
+        <Route path="/admin/clients"        element={<AdminRoute><ClientList /></AdminRoute>} />
+        <Route path="/admin/clients/new"    element={<AdminRoute><ClientCreate /></AdminRoute>} />
+        <Route path="/admin/clients/:id"    element={<AdminRoute><ClientDetails /></AdminRoute>} />
+        <Route path="/admin/analytics"      element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
+
+        <Route path="*" element={<RoleRedirect />} />
       </Routes>
     </BrowserRouter>
   );

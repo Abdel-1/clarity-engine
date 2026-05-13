@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies.db import get_db
 from app.core.security import decode_token
-from app.db.models.user import User, ROLE_ADMIN
+from app.db.models.user import User, ROLE_ADMIN, ROLE_BRAND_ADMIN
 
 security = HTTPBearer()
 
@@ -42,4 +42,24 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 def require_client(current_user: User = Depends(get_current_user)) -> User:
     """Allow any authenticated user (admin or client)."""
+    return current_user
+
+
+def require_brand_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Allow only brand_admin-role users (scoped to a single client)."""
+    if current_user.role != ROLE_BRAND_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Brand admin access required",
+        )
+    return current_user
+
+
+def require_brand_admin_or_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Allow either brand_admin or super admin."""
+    if current_user.role not in (ROLE_ADMIN, ROLE_BRAND_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted",
+        )
     return current_user

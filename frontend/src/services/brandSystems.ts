@@ -1,4 +1,4 @@
-import { getToken } from "./auth";
+import { getToken, logout } from "./auth";
 
 const API = "http://127.0.0.1:8000/api";
 
@@ -11,8 +11,15 @@ function authHeaders(json = false): Record<string, string> {
   return h;
 }
 
+/** If the server returns 401, clear session and redirect to login */
+function handle401(r: Response) {
+  if (r.status === 401) { logout(); window.location.href = "/login"; }
+  return r;
+}
+
 export async function getBrandSystems() {
   const r = await fetch(`${API}/brand-systems`, { headers: authHeaders() });
+  handle401(r);
   return r.json();
 }
 export async function getBrandSystem(id: number) {
@@ -51,10 +58,13 @@ export async function getAnalysis(id: number | string) {
 export async function getAnalyses(filters: Record<string, string> = {}) {
   const p = new URLSearchParams(filters).toString();
   const r = await fetch(`${API}/analyses${p ? "?" + p : ""}`, { headers: authHeaders() });
-  return r.json();
+  handle401(r);
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
 }
 export async function getStats() {
   const r = await fetch(`${API}/analyses/stats`, { headers: authHeaders() });
+  handle401(r);
   return r.json();
 }
 export async function postRewrite(payload: {

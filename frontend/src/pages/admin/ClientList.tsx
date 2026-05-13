@@ -66,8 +66,12 @@ export default function ClientList() {
 
   useEffect(() => {
     fetch(`${API}/api/admin/clients`, { headers: { Authorization: `Bearer ${getToken()}` } })
-      .then(r => { if (!r.ok) throw new Error("Failed to load clients"); return r.json(); })
-      .then(setClients)
+      .then(r => {
+        if (r.status === 401) { logout(); window.location.href = "/login"; }
+        if (!r.ok) throw new Error("Failed to load clients");
+        return r.json();
+      })
+      .then(data => setClients(Array.isArray(data) ? data : []))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);

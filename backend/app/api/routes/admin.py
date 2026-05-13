@@ -5,8 +5,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 
+from sqlalchemy import func
 from app.core.dependencies.db import get_db
-from app.db.models.user import User
+from app.core.dependencies.auth import require_admin, require_brand_admin
+from app.core.security import hash_password
+from app.db.models.user import User, ROLE_CLIENT, ROLE_BRAND_ADMIN
 from app.db.models.client import Client
 from app.db.models.analyses import Analysis
 from app.db.models.brand_system import BrandSystem
@@ -298,3 +301,198 @@ def _serialize(row: Analysis, db: Session) -> dict:
         "analyzed_at": row.analyzed_at.isoformat() if row.analyzed_at else None,
         "parent_analysis_id": row.parent_analysis_id,
     }
+
+
+class ClientUserCreate(BaseModel):
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
+# ── Brand Admin: Provision brand_admin user ────────────────────────────────────
+
+@router.post("/clients/{client_id}/brand-admins", status_code=201)
+def create_brand_admin(
+    client_id: int,
+    payload: ClientUserCreate,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    """
+    Super-admin creates a brand_admin for a specific client.
+    Brand admins can see their client's stats and add client users.
+    """
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = User(
+        email           = payload.email,
+        hashed_password = hash_password(payload.password),
+        full_name       = payload.full_name,
+        role            = ROLE_BRAND_ADMIN,
+        client_id       = client_id,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "id":        user.id,
+        "email":     user.email,
+        "full_name": user.full_name,
+        "role":      user.role,
+        "client_id": user.client_id,
+    }
+
+
+# ── Brand Admin: Scoped endpoints (brand_admin role required) ──────────────────
+
+brand_router = APIRouter(prefix="/brand", tags=["brand"])
+
+
+@brand_router.get("/stats")
+def brand_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_brand_admin),
+):
+    """Aggregated stats for the brand admin's own client."""
+    cid   = current_user.client_id
+    total = db.query(func.count(Analysis.id)).filter(Analysis.client_id == cid).scalar() or 0
+    avg   = db.query(func.avg(Analysis.clarity_score)).filter(Analysis.client_id == cid).scalar()
+    bs_ct = db.query(func.count(BrandSystem.id)).filter(BrandSystem.client_id == cid).scalar() or 0
+    u_ct  = db.query(func.count(User.id)).filter(User.client_id == cid, User.role == ROLE_CLIENT).scalar() or 0
+
+    risk_rows = (
+        db.query(Analysis.narrative_risk, func.count(Analysis.id))
+        .filter(Analysis.client_id == cid)
+        .group_by(Analysis.narrative_risk)
+        .all()
+    )
+    risk_dist = {r: c for r, c in risk_rows}
+
+    client = db.query(Client).filter(Client.id == cid).first()
+    return {
+        "company_name":      client.company_name if client else "",
+        "total_analyses":    total,
+        "avg_score":         round(float(avg), 1) if avg else None,
+        "brand_system_count": bs_ct,
+        "user_count":        u_ct,
+        "risk_distribution": risk_dist,
+    }
+
+
+@brand_router.get("/analyses")
+def brand_analyses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_brand_admin),
+):
+    """All analyses scoped to the brand admin's client, with the team member who ran each one."""
+    rows = (
+        db.query(Analysis)
+        .filter(Analysis.client_id == current_user.client_id)
+        .order_by(Analysis.analyzed_at.desc())
+        .all()
+    )
+    result = []
+    for r in rows:
+        bs = db.query(BrandSystem).filter(BrandSystem.id == r.brand_system_id).first()
+        # Resolve analyzed_by email → full name if we have a matching user
+        member_name = None
+        if r.analyzed_by:
+            u = db.query(User).filter(User.email == r.analyzed_by, User.client_id == current_user.client_id).first()
+            member_name = u.full_name if u and u.full_name else r.analyzed_by
+        result.append({
+            "id":               r.id,
+            "brand_system_id":  r.brand_system_id,
+            "brand_system_name": bs.brand_name if bs else "—",
+            "message_title":    r.message_title,
+            "clarity_score":    r.clarity_score,
+            "narrative_risk":   r.narrative_risk,
+            "channel":          r.channel,
+            "analyzed_at":      r.analyzed_at.isoformat() if r.analyzed_at else None,
+            "analyzed_by":      r.analyzed_by,
+            "member_name":      member_name or r.analyzed_by or "—",
+        })
+    return result
+
+
+@brand_router.get("/members")
+def brand_members(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_brand_admin),
+):
+    """List distinct team members (client users) who have run at least one analysis."""
+    # All client users in this org
+    users = (
+        db.query(User)
+        .filter(User.client_id == current_user.client_id, User.role == ROLE_CLIENT)
+        .all()
+    )
+    result = []
+    for u in users:
+        count = db.query(func.count(Analysis.id)).filter(
+            Analysis.client_id == current_user.client_id,
+            Analysis.analyzed_by == u.email,
+        ).scalar() or 0
+        result.append({
+            "email":      u.email,
+            "full_name":  u.full_name or u.email,
+            "analysis_count": count,
+        })
+    return result
+
+
+
+class BrandUserCreate(BaseModel):
+    email:     str
+    password:  str
+    full_name: Optional[str] = None
+
+
+@brand_router.post("/users", status_code=201)
+def brand_create_user(
+    payload: BrandUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_brand_admin),
+):
+    """Brand admin creates a client (engine) user in their own organisation."""
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = User(
+        email           = payload.email,
+        hashed_password = hash_password(payload.password),
+        full_name       = payload.full_name,
+        role            = ROLE_CLIENT,
+        client_id       = current_user.client_id,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "id":        user.id,
+        "email":     user.email,
+        "full_name": user.full_name,
+        "role":      user.role,
+        "client_id": user.client_id,
+    }
+
+
+@brand_router.get("/users")
+def brand_list_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_brand_admin),
+):
+    """List all users (client role) in the brand admin's organisation."""
+    users = (
+        db.query(User)
+        .filter(User.client_id == current_user.client_id, User.role == ROLE_CLIENT)
+        .order_by(User.id)
+        .all()
+    )
+    return [
+        {"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role}
+        for u in users
+    ]

@@ -47,4 +47,14 @@ export function isAdmin(): boolean {
 export function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("role");
+  localStorage.removeItem("client_id");
+}
+
+export function isBrandAdmin(): boolean {
+  return getRole() === "brand_admin";
+}
+
+export function getClientId(): number | null {
+  const v = localStorage.getItem("client_id");
+  return v ? Number(v) : null;
 }

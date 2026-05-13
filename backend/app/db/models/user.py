@@ -2,6 +2,9 @@ from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 from app.db.base import Base
 
+ROLE_ADMIN       = "admin"
+ROLE_BRAND_ADMIN = "brand_admin"
+ROLE_CLIENT      = "client"
 class User(Base):
     __tablename__ = "users"
 
