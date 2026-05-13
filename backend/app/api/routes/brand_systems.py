@@ -2,8 +2,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Union
 
 from app.core.dependencies.db import get_db
 from app.db.models.brand_system import BrandSystem

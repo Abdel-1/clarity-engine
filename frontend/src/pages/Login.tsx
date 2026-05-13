@@ -1,6 +1,6 @@
 import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../services/auth";
+import { login, saveToken, saveRole } from "../services/auth";
 import logoSvg from "../assets/logo.svg";
 
 export default function Login() {
@@ -14,8 +14,10 @@ export default function Login() {
     e.preventDefault();
     setLoading(true); setError("");
     try {
-      await login(email, password);
-      nav("/");
+      const res = await login(email, password);
+      saveToken(res.access_token);
+      saveRole(res.role || "client");
+      nav(res.role === "admin" ? "/admin" : "/");
     } catch {
       setError("Invalid email or password.");
     } finally { setLoading(false); }

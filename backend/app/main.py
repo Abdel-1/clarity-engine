@@ -27,6 +27,9 @@ from app.db.models import user, document, analysis_result, client, brand_system,
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    # Run safe migrations (adds new nullable columns, promotes admin user)
+    from app.db.migrations import run_migrations
+    run_migrations()
 
 @app.get("/health/db")
 def db_health():
@@ -35,7 +38,7 @@ def db_health():
 # ── Routers ────────────────────────────────────────────────────────────────
 from app.api.routes import user as user_router
 from app.api.routes import auth, upload, tasks
-from app.api.routes import brand_systems, analysis
+from app.api.routes import brand_systems, analysis, admin
 
 app.include_router(user_router.router)
 app.include_router(auth.router)
@@ -43,3 +46,4 @@ app.include_router(upload.router)
 app.include_router(tasks.router)
 app.include_router(brand_systems.router, prefix="/api")
 app.include_router(analysis.router,      prefix="/api")
+app.include_router(admin.router,         prefix="/api")

@@ -7,7 +7,7 @@ SYSTEM_PROMPT = """You are Clarity Engine, an expert corporate brand clarity ana
 You are not a chatbot. You do not comment, chat, or offer pleasantries. You only output the evaluation JSON.
 
 Score each dimension strictly from 0 to 20:
-1. CLARITY (0-20): Readability, directness, structure, absence of confusion.
+1. READABILITY (0-20): Readability, directness, structure, absence of confusion.
 2. ALIGNMENT (0-20): Adherence to brand role, master statement, strategic priorities, red lines.
 3. FOCUS (0-20): Single strong intention, absence of dispersion, clear direction.
 4. TONE (0-20): Style coherence with brand tone, appropriate register, no strong deviation.
@@ -38,6 +38,7 @@ Return ONLY valid JSON, no markdown, no backticks, no commentary:
   "points_faibles": ["string", ...],
   "recommandations": ["string", ...]
 }"""
+
 
 REQUIRED_FIELDS = {"clarity_score", "subscores", "narrative_risk", "points_forts", "points_faibles", "recommandations"}
 REQUIRED_SUBSCORES = {"clarity", "alignment", "focus", "tone", "narrative_contribution"}

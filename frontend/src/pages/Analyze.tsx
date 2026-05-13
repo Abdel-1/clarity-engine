@@ -21,7 +21,6 @@ type Msg =
   | { type: "error"; text: string }
   | { type: "typing"; label?: string };
 
-const RISK_CLASS = { Low: "risk-low", Medium: "risk-medium", High: "risk-high" };
 const scoreColor = (s: number) => s >= 75 ? "#2e7d5e" : s >= 50 ? "#b07d28" : "#c0392b";
 const subClass   = (v: number) => v >= 15 ? "good" : v >= 10 ? "warn" : "bad";
 
@@ -41,10 +40,11 @@ const isRewriteInstruction = (text: string, hasLastResult: boolean): boolean => 
 };
 
 const NAV = [
-  { path: "/",                 label: "Dashboard" },
-  { path: "/analyze",          label: "Analyser" },
-  { path: "/brand-system/new", label: "Brand Systems" },
-  { path: "/history",          label: "Historique" },
+  { path: "/",                    label: "Dashboard" },
+  { path: "/analyze",             label: "Analyser" },
+  { path: "/brand-system/new",    label: "Brand Systems" },
+  { path: "/brand-system/import", label: "Importer un Brand" },
+  { path: "/history",             label: "Historique" },
 ];
 
 const SUGGESTIONS = [
@@ -101,11 +101,11 @@ function AnalysisCard({ data, nav, onRewrite }: {
   onRewrite: (body: string, faibles: string[], recs: string[]) => void;
 }) {
   const subs = [
-    { label: "Clarity",   val: data.sub_clarity },
-    { label: "Alignment", val: data.sub_alignment },
-    { label: "Focus",     val: data.sub_focus },
-    { label: "Tone",      val: data.sub_tone },
-    { label: "Narrative", val: data.sub_narrative_contribution },
+    { label: "Readability", val: data.sub_clarity },
+    { label: "Alignment",   val: data.sub_alignment },
+    { label: "Focus",       val: data.sub_focus },
+    { label: "Tone",        val: data.sub_tone },
+    { label: "Narrative",   val: data.sub_narrative_contribution },
   ];
   const r = 48; const circ = 2 * Math.PI * r;
   const offset = circ - (data.clarity_score / 100) * circ;
@@ -115,10 +115,7 @@ function AnalysisCard({ data, nav, onRewrite }: {
     <div className="chat-analysis-card">
       <div className="chat-card-header">
         <span className="chat-card-label">Analyse de Communication</span>
-        <span className={`risk-badge ${RISK_CLASS[data.narrative_risk]}`}
-          style={{ background: "rgba(255,255,255,0.18)", color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>
-          {data.narrative_risk} Risk
-        </span>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{data.clarity_score}/100</span>
       </div>
 
       {/* Score */}
@@ -139,21 +136,23 @@ function AnalysisCard({ data, nav, onRewrite }: {
         </div>
         <div style={{ flex: 1 }}>
           <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-dim)", marginBottom: 6 }}>
-            Clarity Score
+            Score Global /100
           </p>
           <div style={{ height: 5, background: "var(--bg3)", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
             <div style={{ height: "100%", width: `${data.clarity_score}%`, background: col, borderRadius: 3, transition: "width 1s ease" }} />
           </div>
-          <span className={`risk-badge ${RISK_CLASS[data.narrative_risk]}`}>{data.narrative_risk} Risk</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: col }}>{data.clarity_score}/100</span>
         </div>
       </div>
 
-      {/* Subscores */}
+      {/* Subscores /20 */}
       <div className="chat-card-subscores">
         {subs.map(s => (
           <div key={s.label} className="chat-card-sub">
             <p className="score-label-sm">{s.label}</p>
-            <p className={`score-val ${subClass(s.val)}`} style={{ fontSize: 18 }}>{s.val}</p>
+            <p className={`score-val ${subClass(s.val)}`} style={{ fontSize: 16 }}>
+              {s.val}<span style={{ fontSize: "0.55em", color: "var(--text-dim)", fontWeight: 400 }}>/20</span>
+            </p>
             <div className="score-bar-mini">
               <div className="score-bar-fill" style={{ width: `${(s.val / 20) * 100}%`, background: scoreColor(s.val * 5) }} />
             </div>
@@ -226,11 +225,14 @@ export default function Analyze() {
   const [brandSystems, setBrandSystems]   = useState<BS[]>([]);
   const [loading, setLoading]             = useState(false);
   const [channel, setChannel]             = useState("");
+  const [channelCustom, setChannelCustom] = useState("");
   const [contentType, setContentType]     = useState("");
+  const [contentTypeCustom, setContentTypeCustom] = useState("");
   const [showMeta, setShowMeta]           = useState(false);
   const [audience, setAudience]           = useState("");
   const [campaign, setCampaign]           = useState("");
   const [title, setTitle]                 = useState("");
+  const [lastAnalysisId, setLastAnalysisId] = useState<number | null>(null); // for before/after tracking
   const endRef  = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -258,6 +260,8 @@ export default function Analyze() {
   /* ── Trigger re-analyze from rewrite card ── */
   const triggerReanalyze = (body: string) => {
     setInput(body);
+    // Set the last analysis id so the re-analysis is linked as "after rewrite"
+    if (lastResult) setLastAnalysisId(lastResult.data.id);
     textRef.current?.focus();
   };
 
@@ -318,18 +322,19 @@ export default function Analyze() {
       setLoading(true);
       try {
         const res = await postAnalyze({
-          brand_system_id: bsId,
-          message_title:   title || text.slice(0, 60),
-          message_body:    text,
-          message_language: "fr",
-          channel:         channel || null,
-          content_type:    contentType || null,
-          audience:        audience || null,
-          campaign:        campaign || null,
+          brand_system_id:    bsId,
+          message_title:      title || text.slice(0, 60),
+          message_body:       text,
+          message_language:   "fr",
+          channel:            (channel === "__autre__" ? channelCustom : channel) || null,
+          content_type:       (contentType === "__autre__" ? contentTypeCustom : contentType) || null,
+          audience:           audience || null,
+          campaign:           campaign || null,
+          parent_analysis_id: lastAnalysisId,   // track before/after rewrite
         });
         const full = await getAnalysis(res.id);
-        // Attach the original body so rewrite can reference it
         full.message_body = text;
+        setLastAnalysisId(null); // reset after use
         setMessages(prev => [...removeTyping(prev), { type: "result", data: full }]);
       } catch (err: unknown) {
         setMessages(prev => [
@@ -477,13 +482,23 @@ export default function Analyze() {
                 {["Communication", "Article", "Speech", "Email", "Press Release", "Post LinkedIn", "Report"].map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}
+                <option value="__autre__">✏️ Autre (préciser…)</option>
               </select>
+              {contentType === "__autre__" && (
+                <input className="meta-input" placeholder="Préciser le type…" value={contentTypeCustom}
+                  onChange={e => setContentTypeCustom(e.target.value)} style={{ flex: 1, minWidth: 120 }} />
+              )}
               <select className="chat-select" value={channel} onChange={e => setChannel(e.target.value)}>
                 <option value="">Canal</option>
                 {["Email", "LinkedIn", "Press Release", "Website", "Internal", "Social Media"].map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}
+                <option value="__autre__">✏️ Autre (préciser…)</option>
               </select>
+              {channel === "__autre__" && (
+                <input className="meta-input" placeholder="Préciser le canal…" value={channelCustom}
+                  onChange={e => setChannelCustom(e.target.value)} style={{ flex: 1, minWidth: 120 }} />
+              )}
               <button className="meta-toggle-btn" onClick={() => setShowMeta(v => !v)}>
                 {showMeta ? "Masquer" : "+ Contexte"}
               </button>

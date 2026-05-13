@@ -1,10 +1,14 @@
 import { Navigate } from "react-router-dom";
-import { isAuthenticated } from "../services/auth";
+import { isAuthenticated, isAdmin } from "../services/auth";
 
 export default function ProtectedRoute({
   children,
+  adminOnly = false,
 }: {
   children: JSX.Element;
+  adminOnly?: boolean;
 }) {
-  return isAuthenticated() ? children : <Navigate to="/login" replace />;
+  if (!isAuthenticated()) return <Navigate to="/login" replace />;
+  if (adminOnly && !isAdmin()) return <Navigate to="/" replace />;
+  return children;
 }
