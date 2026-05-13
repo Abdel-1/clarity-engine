@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { logout } from "../services/auth";
+import { logout, isAdmin } from "../services/auth";
 import { getStats, getAnalyses } from "../services/brandSystems";
 import logoSvg from "../assets/logo.svg";
 
@@ -9,12 +9,15 @@ interface Row { id:number; message_title:string; brand_system_name:string; clari
 const RISK_CLASS: Record<string,string> = { Low:"risk-low", Medium:"risk-medium", High:"risk-high" };
 const scoreClass = (s: number) => s >= 75 ? "score-green" : s >= 50 ? "score-amber" : "score-red";
 
-const NAV = [
-  { path: "/",                    label: "Dashboard" },
-  { path: "/analyze",             label: "Analyser" },
-  { path: "/brand-system/new",    label: "Brand Systems" },
-  { path: "/brand-system/import", label: "Importer un Brand" },
-  { path: "/history",             label: "Historique" },
+const NAV_CLIENT = [
+  { path: "/",        label: "Dashboard" },
+  { path: "/analyze", label: "Analyser" },
+  { path: "/history", label: "Historique" },
+];
+
+const NAV_ADMIN = [
+  { path: "/admin/clients",   label: "Clients" },
+  { path: "/admin/analytics", label: "Analytics" },
 ];
 
 export default function Dashboard() {
@@ -42,7 +45,7 @@ export default function Dashboard() {
           <div style={{marginBottom:6, padding:"0 8px", fontSize:10, fontWeight:700, color:"var(--text-dim)", textTransform:"uppercase", letterSpacing:"0.9px"}}>
             Navigation
           </div>
-          {NAV.map(n => (
+          {(isAdmin() ? NAV_ADMIN : NAV_CLIENT).map(n => (
             <a key={n.path} href={n.path} id={`nav-${n.label.toLowerCase().replace(" ","_")}`}
               className={`nav-item${active===n.path?" active":""}`}
               onClick={e => { e.preventDefault(); go(n.path); }}>
@@ -61,12 +64,14 @@ export default function Dashboard() {
         <div className="page-content" style={{maxWidth:900}}>
           <header className="dash-header">
             <div>
-              <h1 className="dash-title">Brand Governance</h1>
+              <h1 className="dash-title">{isAdmin() ? "Admin Overview" : "Brand Governance"}</h1>
               <p className="dash-subtitle">Clarity Engine · Communication analysis platform</p>
             </div>
-            <a href="/analyze" className="btn-primary" onClick={e=>{e.preventDefault();go("/analyze")}}>
-              + Nouvelle analyse
-            </a>
+            {!isAdmin() && (
+              <a href="/analyze" className="btn-primary" onClick={e=>{e.preventDefault();go("/analyze")}}>
+                + Nouvelle analyse
+              </a>
+            )}
           </header>
 
           {/* KPIs */}
@@ -143,21 +148,22 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Quick actions */}
-          <div className="quick-actions">
-            {[
-              {path:"/analyze",          icon:"🔍", label:"Analyser un message",   sub:"Evaluate against your Brand System"},
-              {path:"/brand-system/new", icon:"🏷",  label:"Nouveau Brand System",  sub:"Define your brand governance reference"},
-              {path:"/history",          icon:"📋", label:"Historique",              sub:"Browse all past analyses"},
-            ].map(a => (
-              <a key={a.path} href={a.path} className="quick-card" id={`quick-${a.label.toLowerCase().replace(/\s/g,"_")}`}
-                onClick={e=>{e.preventDefault();go(a.path)}}>
-                <span className="quick-icon">{a.icon}</span>
-                <p className="quick-label">{a.label}</p>
-                <p className="quick-sub">{a.sub}</p>
-              </a>
-            ))}
-          </div>
+          {/* Quick actions — client only */}
+          {!isAdmin() && (
+            <div className="quick-actions">
+              {[
+                {path:"/analyze", icon:"🔍", label:"Analyser un message", sub:"Evaluate against your Brand System"},
+                {path:"/history", icon:"📋", label:"Historique",           sub:"Browse all past analyses"},
+              ].map(a => (
+                <a key={a.path} href={a.path} className="quick-card" id={`quick-${a.label.toLowerCase().replace(/\s/g,"_")}`}
+                  onClick={e=>{e.preventDefault();go(a.path)}}>
+                  <span className="quick-icon">{a.icon}</span>
+                  <p className="quick-label">{a.label}</p>
+                  <p className="quick-sub">{a.sub}</p>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       </main>
     </div>

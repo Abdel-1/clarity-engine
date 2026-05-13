@@ -36,6 +36,7 @@ def db_health():
 from app.api.routes import user as user_router
 from app.api.routes import auth, upload, tasks
 from app.api.routes import brand_systems, analysis
+from app.api.routes import admin
 
 app.include_router(user_router.router)
 app.include_router(auth.router)
@@ -43,3 +44,5 @@ app.include_router(upload.router)
 app.include_router(tasks.router)
 app.include_router(brand_systems.router, prefix="/api")
 app.include_router(analysis.router,      prefix="/api")
+app.include_router(admin.router,         prefix="/api") 
+  

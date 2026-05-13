@@ -40,11 +40,10 @@ const isRewriteInstruction = (text: string, hasLastResult: boolean): boolean => 
   return REWRITE_KEYWORDS.some(k => lower.includes(k));
 };
 
-const NAV = [
-  { path: "/",                 label: "Dashboard" },
-  { path: "/analyze",          label: "Analyser" },
-  { path: "/brand-system/new", label: "Brand Systems" },
-  { path: "/history",          label: "Historique" },
+const NAV_CLIENT = [
+  { path: "/",        label: "Dashboard",  icon: "⬡" },
+  { path: "/analyze", label: "Analyser",   icon: "✦" },
+  { path: "/history", label: "Historique", icon: "◈" },
 ];
 
 const SUGGESTIONS = [
@@ -358,10 +357,10 @@ export default function Analyze() {
           <div style={{ marginBottom: 6, padding: "0 8px", fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.9px" }}>
             Navigation
           </div>
-          {NAV.map(n => (
+          {NAV_CLIENT.map(n => (
             <a key={n.path} href={n.path} className={`nav-item${n.path === "/analyze" ? " active" : ""}`}
               onClick={e => { e.preventDefault(); nav(n.path); }}>
-              {n.label}
+              <span style={{ fontSize: "0.9rem" }}>{n.icon}</span> {n.label}
             </a>
           ))}
         </nav>

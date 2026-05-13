@@ -639,3 +639,6 @@ Password: Clarity123
 ---
 
 *Clarity Engine — Built by Zone Bleue · Powered by Groq AI*
+
+
+Build a clarity admin and clarity client panels for the client and the admin, in order to test everything . Give me the login and the pass for both the admin and the client

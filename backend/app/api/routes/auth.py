@@ -11,28 +11,38 @@ service = UserService()
 
 @router.post("/register")
 def register(email: str, password: str, db: Session = Depends(get_db)):
-
     user = service.create_user(db, email, password)
 
-    token = create_access_token({"user_id": user.id})
+    token = create_access_token({
+        "user_id":   user.id,
+        "role":      user.role,
+        "client_id": user.client_id,
+    })
 
     return {
         "access_token": token,
-        "token_type": "bearer"
+        "token_type":   "bearer",
+        "role":         user.role,
+        "client_id":    user.client_id,
     }
 
 
 @router.post("/login")
 def login(email: str, password: str, db: Session = Depends(get_db)):
-
     user = service.authenticate_user(db, email, password)
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"user_id": user.id})
+    token = create_access_token({
+        "user_id":   user.id,
+        "role":      user.role,
+        "client_id": user.client_id,
+    })
 
     return {
         "access_token": token,
-        "token_type": "bearer"
+        "token_type":   "bearer",
+        "role":         user.role,
+        "client_id":    user.client_id,
     }

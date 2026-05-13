@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.dependencies.db import get_db
+from app.core.dependencies.auth import require_client
+from app.db.models.user import User, ROLE_ADMIN
 from app.db.models.analyses import Analysis
 from app.db.models.brand_system import BrandSystem
 from app.services.brand_analysis_service import analyze_message, rewrite_message
@@ -95,27 +97,36 @@ def run_analysis(payload: AnalyzeRequest, db: Session = Depends(get_db)):
 
 @router.get("/analyses")
 def list_analyses(
-    risk: Optional[str]    = Query(None),
-    channel: Optional[str] = Query(None),
-    date_from: Optional[str] = Query(None),
-    date_to:   Optional[str] = Query(None),
-    db: Session = Depends(get_db),
+    risk: Optional[str]       = Query(None),
+    channel: Optional[str]    = Query(None),
+    date_from: Optional[str]  = Query(None),
+    date_to:   Optional[str]  = Query(None),
+    db: Session                = Depends(get_db),
+    current_user: User         = Depends(require_client),
 ):
     q = db.query(Analysis)
-    if risk:    q = q.filter(Analysis.narrative_risk == risk)
-    if channel: q = q.filter(Analysis.channel == channel)
+    # Scope to client's own data unless admin
+    if current_user.role != ROLE_ADMIN:
+        q = q.filter(Analysis.client_id == current_user.client_id)
+    if risk:      q = q.filter(Analysis.narrative_risk == risk)
+    if channel:   q = q.filter(Analysis.channel == channel)
     if date_from:
         q = q.filter(Analysis.analyzed_at >= datetime.fromisoformat(date_from))
     if date_to:
         q = q.filter(Analysis.analyzed_at <= datetime.fromisoformat(date_to))
     rows = q.order_by(Analysis.analyzed_at.desc()).all()
-
     return [_serialize(r, db) for r in rows]
 
 
 @router.get("/analyses/stats")
-def get_stats(db: Session = Depends(get_db)):
-    rows = db.query(Analysis).all()
+def get_stats(
+    db: Session       = Depends(get_db),
+    current_user: User = Depends(require_client),
+):
+    q = db.query(Analysis)
+    if current_user.role != ROLE_ADMIN:
+        q = q.filter(Analysis.client_id == current_user.client_id)
+    rows = q.all()
     if not rows:
         return {"total": 0, "avg_score": 0, "risk_distribution": {"Low": 0, "Medium": 0, "High": 0}}
     avg = sum(r.clarity_score for r in rows) / len(rows)

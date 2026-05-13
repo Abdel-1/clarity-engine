@@ -1,6 +1,6 @@
 import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../services/auth";
+import { login, isAdmin } from "../services/auth";
 import logoSvg from "../assets/logo.svg";
 
 export default function Login() {
@@ -15,11 +15,13 @@ export default function Login() {
     setLoading(true); setError("");
     try {
       await login(email, password);
-      nav("/");
+      // Role is now saved in localStorage by login() → redirect accordingly
+      nav(isAdmin() ? "/admin/clients" : "/");
     } catch {
       setError("Invalid email or password.");
     } finally { setLoading(false); }
   };
+
 
   return (
     <div className="login-root">
