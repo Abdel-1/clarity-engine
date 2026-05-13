@@ -6,6 +6,8 @@ from pydantic import BaseModel, field_validator
 from typing import Optional, List, Union
 
 from app.core.dependencies.db import get_db
+from app.core.dependencies.auth import require_client, require_admin
+from app.db.models.user import User, ROLE_ADMIN
 from app.db.models.brand_system import BrandSystem
 from app.db.models.client import Client
 from app.services.document_extractor import extract_text
@@ -29,18 +31,21 @@ class BrandSystemCreate(BaseModel):
     created_by:       Optional[str] = None
 
 
-def _get_or_create_default_client(db: Session) -> int:
-    client = db.query(Client).first()
-    if not client:
-        client = Client(company_name="Default")
-        db.add(client); db.commit(); db.refresh(client)
-    return client.id
-
 
 @router.post("/brand-systems", status_code=201)
-def create_brand_system(payload: BrandSystemCreate, db: Session = Depends(get_db)):
-    client_id = _get_or_create_default_client(db)
-    bs = BrandSystem(client_id=client_id, **payload.dict())
+def create_brand_system(
+    payload: BrandSystemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Admin-only: create a brand system scoped to the admin's chosen client."""
+    # client_id must come from a follow-up or be supplied externally;
+    # use the first active client as a safe default for direct API use.
+    from app.db.models.client import Client as _Client
+    client = db.query(_Client).first()
+    if not client:
+        raise HTTPException(status_code=400, detail="No client exists yet. Create a client first.")
+    bs = BrandSystem(client_id=client.id, **payload.dict())
     db.add(bs); db.commit(); db.refresh(bs)
     return {"id": bs.id, "brand_name": bs.brand_name, "version": bs.version}
 
@@ -97,8 +102,15 @@ async def import_brand_system(
 
 
 @router.get("/brand-systems")
-def list_brand_systems(db: Session = Depends(get_db)):
-    rows = db.query(BrandSystem).filter(BrandSystem.is_active == True).all()
+def list_brand_systems(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_client),
+):
+    q = db.query(BrandSystem).filter(BrandSystem.is_active == True)
+    # Client users only see their own brand systems
+    if current_user.role != ROLE_ADMIN:
+        q = q.filter(BrandSystem.client_id == current_user.client_id)
+    rows = q.all()
     return [
         {
             "id": r.id, "brand_name": r.brand_name, "version": r.version,
@@ -117,7 +129,13 @@ def get_brand_system(bs_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/brand-systems/{bs_id}")
-def update_brand_system(bs_id: int, payload: BrandSystemCreate, db: Session = Depends(get_db)):
+def update_brand_system(
+    bs_id: int,
+    payload: BrandSystemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Admin-only: update any brand system."""
     bs = db.query(BrandSystem).filter(BrandSystem.id == bs_id).first()
     if not bs:
         raise HTTPException(status_code=404, detail="Brand system not found")
