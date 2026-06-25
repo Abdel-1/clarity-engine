@@ -1,383 +1,503 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getToken, logout } from "../../services/auth";
-import logoSvg from "../../assets/logo.svg";
+import { getAdminDashboard, getAdminTokenUsage, getAnalyses } from "../../services/brandSystems";
+import type { TokenUsage } from "../../services/brandSystems";
+import AppSidebar from "../../components/AppSidebar";
+import ComparisonPanel from "../../components/ComparisonPanel";
+import type { CompareEntity, CompareMetric } from "../../components/ComparisonPanel";
+import TimelineVolumeChart from "../../components/TimelineVolumeChart";
+import InfoTip from "../../components/InfoTip";
+import Select from "../../components/Select";
 
-const API = "http://127.0.0.1:8000";
+/* ── Types ─────────────────────────────────────────────────────── */
+interface BrandHealth {
+  client_id: number; company_name: string; total_analyses: number;
+  avg_score: number; pass_rate: number; high_risk_count: number; unreviewed_high_risk_count: number;
+  avg_improvement: number | null; avg_iterations: number | null;
+}
+interface RawAnalysis { analyzed_at: string | null; brand_system_name: string | null }
+interface Unreviewed { id: number; title: string; score: number; date: string | null; author: string | null; brand_system_id?: number | null; brand_system_name?: string | null }
+interface TrendPoint { id: number; date: string | null; score: number; title: string; brand_system_id?: number | null; brand_system_name?: string | null }
+interface UserPerf { user: string; count: number; avg_score: number; company_name: string }
+interface DashData {
+  total_analyses: number; total_clients: number; total_users: number; avg_score: number;
+  avg_score_start: number | null; avg_score_end: number | null;
+  unreviewed_count: number;
+  brand_health: BrandHealth[];
+  high_risk_frequency: number; high_risk_rate: number;
+  unreviewed_high_risk: Unreviewed[];
+  governance_coverage: number;
+  per_user: UserPerf[];
+  score_distribution: Record<string, number>;
+  score_trend: TrendPoint[];
+}
 
-const NAV_ADMIN = [
-  { path: "/admin/clients",   label: "Clients",   icon: "◈" },
-  { path: "/admin/analytics", label: "Analytics", icon: "✦" },
+const NAV = [
+  { path: "/admin/clients",   label: "Clients",     icon: "◈" },
+  { path: "/admin/analytics", label: "Analytiques", icon: "✦" },
+  { path: "/history",         label: "Historique",  icon: "◷" },
 ];
 
-interface PerClient { client_id: number; company_name: string; total: number; avg_score: number | null; }
-interface GlobalStats {
-  total_analyses:     number;
-  avg_score:          number | null;
-  client_count:       number;
-  brand_system_count: number;
-  risk_distribution:  Record<string, number>;
-  per_client:         PerClient[];
-}
-interface AnalysisRow {
-  id: number;
-  client_id: number;
-  brand_system_id: number;
-  message_title: string;
-  clarity_score: number;
-  narrative_risk: string;
-  analyzed_at: string;
-}
+const scoreColor = (s: number) => s >= 75 ? "#2ec88c" : s >= 50 ? "#f0a832" : "#e05252";
+const DONUT_COLORS: Record<string, string> = { "0-25": "#e05252", "25-50": "#f0a832", "50-75": "#4e8ef7", "75-100": "#2ec88c" };
+const DONUT_LABELS: Record<string, string> = { "0-25": "Critique", "25-50": "Faible", "50-75": "Acceptable", "75-100": "Conforme" };
 
-const scoreColor = (s: number | null) =>
-  s === null ? "var(--text-dim)" : s >= 75 ? "var(--success)" : s >= 50 ? "var(--warn)" : "var(--danger)";
-const scoreClass = (s: number | null) =>
-  s === null ? "" : s >= 75 ? "score-green" : s >= 50 ? "score-amber" : "score-red";
-const riskCol: Record<string, string> = { Low: "#2e7d5e", Medium: "#b07d28", High: "#c0392b" };
-const riskBg:  Record<string, string> = { Low: "rgba(46,125,94,0.1)", Medium: "rgba(176,125,40,0.1)", High: "rgba(192,57,43,0.1)" };
-
-function Sidebar({ nav }: { nav: ReturnType<typeof useNavigate> }) {
+/* ── Stat Card ─────────────────────────────────────────────────── */
+function StatCard({ label, value, icon, color, sub, tooltip, onClick }: {
+  label: string; value: string | number; icon: string; color: string; sub?: string;
+  tooltip?: string; onClick?: () => void;
+}) {
   return (
-    <aside className="sidebar" style={{ background: "linear-gradient(180deg, #0f1923 0%, #131f2e 100%)", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-      <div className="sidebar-brand" style={{ background: "rgba(42,82,152,0.15)", borderBottom: "1px solid rgba(255,255,255,0.06)", padding: "18px 16px" }}>
-        <img src={logoSvg} alt="Zone Bleue" style={{ height: 30, maxWidth: "100%", filter: "brightness(1.8)" }} />
-        <div style={{ marginTop: 8, fontSize: 10, fontWeight: 700, color: "rgba(253,211,53,0.8)", textTransform: "uppercase", letterSpacing: "1.2px" }}>
-          Admin Panel
-        </div>
+    <div
+      className="stat-card"
+      style={{
+        background: "var(--bg2)", border: "1px solid var(--border)",
+        borderRadius: 16, padding: "22px 20px 18px",
+        // Top accent drawn as an inset shadow: it follows the card's rounded
+        // corners cleanly without `overflow: hidden`, which would clip the
+        // KPI hover tooltip.
+        boxShadow: `inset 0 3px 0 0 ${color}`,
+        position: "relative", contain: "layout",
+        cursor: onClick ? "pointer" : "default",
+      }}
+      onClick={onClick}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+          {label}
+          {tooltip && <InfoTip text={tooltip} align="center" />}
+        </span>
+        <span style={{ fontSize: "1.1rem" }}>{icon}</span>
       </div>
-      <nav className="sidebar-nav" style={{ padding: "16px 10px" }}>
-        {NAV_ADMIN.map(n => (
-          <a key={n.path} href={n.path} id={`nav-${n.label.toLowerCase()}`}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "9px 12px", borderRadius: 8, marginBottom: 2,
-              textDecoration: "none", fontSize: 13, fontWeight: 500,
-              color: window.location.pathname === n.path ? "#fdd335" : "rgba(255,255,255,0.55)",
-              background: window.location.pathname === n.path ? "rgba(253,211,53,0.08)" : "transparent",
-              border: window.location.pathname === n.path ? "1px solid rgba(253,211,53,0.15)" : "1px solid transparent",
-              transition: "all 0.15s",
-            }}
-            onClick={e => { e.preventDefault(); nav(n.path); }}>
-            <span style={{ fontSize: "1rem" }}>{n.icon}</span> {n.label}
-          </a>
-        ))}
-      </nav>
-      <button style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "12px 16px", background: "none", border: "none", borderTop: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.35)", fontFamily: "inherit", fontSize: 13, cursor: "pointer", transition: "color 0.15s" }}
-        onMouseEnter={e => (e.currentTarget.style.color = "#c0392b")}
-        onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
-        onClick={() => { logout(); window.location.href = "/login"; }}>
-        ⎋ Sign Out
-      </button>
-    </aside>
+      <div style={{ fontFamily: "'Lora', serif", fontSize: 30, fontWeight: 600, color: "var(--text)", lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{sub}</div>}
+    </div>
   );
 }
 
-export default function AdminAnalytics() {
-  const nav = useNavigate();
-  const [stats,     setStats]     = useState<GlobalStats | null>(null);
-  const [analyses,  setAnalyses]  = useState<AnalysisRow[]>([]);
-  const [clients,   setClients]   = useState<Record<number, string>>({});
-  const [tab,       setTab]       = useState<"overview" | "history">("overview");
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState("");
-  const [riskFilter, setRiskFilter] = useState("");
-  const [clientFilter, setClientFilter] = useState("");
+/* ── Mini Bar Chart ────────────────────────────────────────────── */
+function MiniChart({ data, onBarClick }: { data: TrendPoint[]; onBarClick?: (id: number) => void }) {
+  if (!data.length) return <div style={{ color: "var(--text-dim)", fontSize: 12, padding: 20 }}>Pas encore de données</div>;
+  const h = 120;
+  return (
+    <div style={{ display: "flex", gap: 8, height: h, width: "100%", paddingTop: 6 }}>
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "flex-end", color: "var(--text-dim)", fontSize: 10 }}>
+        <span style={{ lineHeight: 1, marginTop: -4 }}>100%</span>
+        <span style={{ lineHeight: 1 }}>50%</span>
+        <span style={{ lineHeight: 1, marginBottom: -4 }}>0%</span>
+      </div>
+      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "flex-end", gap: 2 }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, borderTop: "1px dashed var(--border)", zIndex: 0 }} />
+        <div style={{ position: "absolute", top: "50%", left: 0, right: 0, borderTop: "1px dashed var(--border)", zIndex: 0 }} />
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, borderTop: "1px solid var(--border)", zIndex: 0 }} />
+        {data.map((d, i) => (
+          <div key={i} title={`${d.title}\n${d.score}/100 — ${d.date}`}
+            onClick={() => onBarClick?.(d.id)}
+            style={{
+              flex: 1, maxWidth: 16, height: `${Math.max(4, d.score)}%`, borderRadius: "3px 3px 0 0",
+              background: `linear-gradient(180deg, ${scoreColor(d.score)}, ${scoreColor(d.score)}88)`,
+              transition: "height 0.5s ease", cursor: "pointer", zIndex: 1,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-  const tok = { Authorization: `Bearer ${getToken()}` };
+/* ── Donut Chart ───────────────────────────────────────────────── */
+function DonutChart({ dist, total }: { dist: Record<string, number>; total: number }) {
+  const r = 44, cx = 54, cy = 54;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  const slices = Object.entries(dist).filter(([, v]) => v > 0);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+      <svg width={108} height={108} viewBox="0 0 108 108">
+        {slices.map(([key, count]) => {
+          const pct = total ? count / total : 0;
+          const dash = pct * circ;
+          const el = (
+            <circle key={key} cx={cx} cy={cy} r={r} fill="none"
+              stroke={DONUT_COLORS[key] || "#666"} strokeWidth={14}
+              strokeDasharray={`${dash} ${circ - dash}`}
+              strokeDashoffset={-offset}
+              transform={`rotate(-90 ${cx} ${cy})`}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+        <text x={cx} y={cy - 2} textAnchor="middle" fill="var(--text)" fontFamily="'Lora',serif" fontSize={20} fontWeight={600}>{total}</text>
+        <text x={cx} y={cy + 12} textAnchor="middle" fill="var(--text-dim)" fontSize={8}>analyses</text>
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {slices.map(([key, count]) => (
+          <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: DONUT_COLORS[key] }} />
+            <span style={{ fontSize: 11, color: "var(--text)" }}>{DONUT_LABELS[key]} <span style={{ color: "var(--text-dim)" }}>({count})</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Brand-system filter dropdown ───────────────────────────────── */
+function BrandFilter({ value, options, onChange }: {
+  value: string; options: string[]; onChange: (v: string) => void;
+}) {
+  if (!options.length) return null;
+  return (
+    <Select
+      value={value}
+      onChange={onChange}
+      placeholder="Toutes les marques"
+      ariaLabel="Filtrer par marque"
+      options={options.map(o => ({ value: o, label: o }))}
+    />
+  );
+}
+
+/* ── API token consumption per brand system (date + brand filters) ── */
+function TokenPanel() {
+  const [start, setStart]   = useState("");
+  const [end, setEnd]       = useState("");
+  const [brandId, setBrandId] = useState("");   // selected brand_system_id (as string for <Select>)
+  const [tu, setTu]         = useState<TokenUsage | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      fetch(`${API}/api/admin/stats`,    { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
-      fetch(`${API}/api/admin/analyses`, { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
-      fetch(`${API}/api/admin/clients`,  { headers: tok }).then(r => { if (r.status === 401) { logout(); window.location.href = "/login"; } return r.json(); }),
-    ])
-      .then(([s, a, c]) => {
-        setStats(s && !s.detail ? s : null);
-        setAnalyses(Array.isArray(a) ? a : []);
-        const map: Record<number, string> = {};
-        if (Array.isArray(c)) c.forEach((cl: any) => { map[cl.id] = cl.company_name; });
-        setClients(map);
-      })
+    let alive = true;
+    setLoading(true);
+    getAdminTokenUsage({ start: start || undefined, end: end || undefined, brandSystemId: brandId ? Number(brandId) : undefined })
+      .then(d => { if (alive) setTu(d); })
+      .catch(() => { if (alive) setTu(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [start, end, brandId]);
+
+  const selectedBrand = tu?.brand_systems.find(b => String(b.id) === brandId)?.name;
+
+  const fmt = (n: number) => n.toLocaleString("fr-FR");
+  const currency = tu?.pricing?.currency || "USD";
+  const money = (n: number) => {
+    try {
+      return new Intl.NumberFormat("fr-FR", {
+        style: "currency", currency,
+        minimumFractionDigits: 2, maximumFractionDigits: 4,
+      }).format(n);
+    } catch {
+      return `${n.toFixed(4)} ${currency}`;
+    }
+  };
+  const inputStyle = {
+    // `width: "auto"` overrides the global `input, select { width: 100% }` rule
+    // in index.css — without it these date inputs stretch to fill the row.
+    width: "auto",
+    background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8,
+    padding: "6px 10px", fontSize: 12, color: "var(--text)", fontFamily: "inherit", outline: "none",
+  } as const;
+  const barColor = (i: number) => ["#4e8ef7", "#7c3aed", "#2ec88c", "#e0a052", "#e05252", "#22b8cf"][i % 6];
+
+  return (
+    <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 22px", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px", margin: 0 }}>
+          Coût API par Brand System
+          <InfoTip text="Coût des tokens consommés par les analyses, ventilé par Brand System. Filtrable par période et par Brand System. Le suivi démarre à son activation : les analyses antérieures comptent pour 0." />
+        </p>
+        {/* Filters */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 11, color: "var(--text-dim)" }}>Du</label>
+          <input type="date" value={start} max={end || undefined} onChange={e => setStart(e.target.value)} style={inputStyle} />
+          <label style={{ fontSize: 11, color: "var(--text-dim)" }}>au</label>
+          <input type="date" value={end} min={start || undefined} onChange={e => setEnd(e.target.value)} style={inputStyle} />
+          <Select
+            value={brandId}
+            onChange={setBrandId}
+            placeholder="Tous les Brand Systems"
+            ariaLabel="Filtrer par Brand System"
+            size="md"
+            style={{ maxWidth: 220 }}
+            options={(tu?.brand_systems ?? []).map(b => ({
+              value: String(b.id),
+              label: b.name,
+            }))}
+          />
+          {(start || end || brandId) && (
+            <button onClick={() => { setStart(""); setEnd(""); setBrandId(""); }} style={{
+              ...inputStyle, cursor: "pointer", color: "var(--text-dim)",
+            }}>↺ Réinitialiser</button>
+          )}
+        </div>
+      </div>
+
+      {/* Total cost — analyses count as the supporting figure */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 18, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontSize: 26, fontWeight: 700, color: "#2ec88c", fontFamily: "'Lora', serif" }}>
+            {loading ? "…" : money(tu?.grand_total_cost ?? 0)}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            dépensés · {fmt(tu?.total_analyses ?? 0)} analyses{selectedBrand ? ` · ${selectedBrand}` : ""}
+          </span>
+        </div>
+      </div>
+
+      {/* Per-brand bars */}
+      {loading ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-dim)", padding: "12px 0", fontSize: 13 }}>
+          <div className="spinner" style={{ borderTopColor: "#4e8ef7" }} /> Chargement…
+        </div>
+      ) : (tu?.grand_total_tokens ?? 0) === 0 ? (
+        <p style={{ color: "var(--text-dim)", fontSize: 13, padding: "8px 0" }}>
+          Aucune consommation de tokens enregistrée sur cette période. Le suivi des tokens démarre avec
+          les analyses effectuées après son activation ; les analyses antérieures comptent pour 0.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {tu!.by_brand.map((b, i) => {
+            // Bar reflects each brand system's share of total cost.
+            const costPct = tu!.grand_total_cost ? (b.cost / tu!.grand_total_cost) * 100 : 0;
+            return (
+              <div key={b.brand_system_id}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 12.5 }}>
+                  <span style={{ color: "var(--text)", fontWeight: 600 }}>{b.brand_system_name}</span>
+                  <span style={{ color: "var(--text-dim)" }}>
+                    <strong style={{ color: "#2ec88c" }}>{money(b.cost)}</strong> · {fmt(b.analyses)} analyses
+                  </span>
+                </div>
+                <div style={{ height: 9, borderRadius: 100, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", width: `${costPct}%`, borderRadius: 100,
+                    background: barColor(i), transition: "width .5s cubic-bezier(.4,0,.2,1)",
+                  }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <p style={{ fontSize: 10.5, color: "var(--text-dim)", marginTop: 14, marginBottom: 0, lineHeight: 1.5 }}>
+        Coût calculé aux tarifs. La barre indique la part de chaque Brand System dans le coût total
+        sur la période / les brand sélectionnés.
+      </p>
+    </div>
+  );
+}
+
+/* ── Main Component ────────────────────────────────────────────── */
+export default function AdminAnalytics() {
+  const nav = useNavigate();
+  const [data, setData] = useState<DashData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  // "" = all brand systems
+  const [trendBrand, setTrendBrand] = useState("");
+  const [unreviewedBrand, setUnreviewedBrand] = useState("");
+
+  /* Brand-vs-brand comparison */
+  const [compareSet, setCompareSet] = useState<Set<number>>(new Set());
+  const [showCompare, setShowCompare] = useState(false);
+  function toggleCompare(clientId: number) {
+    setCompareSet(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId); else next.add(clientId);
+      return next;
+    });
+  }
+
+  /* Full analysis history — drives the per-brand-system volume-over-time chart */
+  const [allAnalyses, setAllAnalyses] = useState<RawAnalysis[]>([]);
+
+  useEffect(() => {
+    getAdminDashboard()
+      .then(setData)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+  useEffect(() => { getAnalyses({}).then(setAllAnalyses); }, []);
 
-  const filteredAnalyses = analyses.filter(a => {
-    if (riskFilter && a.narrative_risk !== riskFilter) return false;
-    if (clientFilter && String(a.client_id) !== clientFilter) return false;
-    return true;
-  });
+  // Distinct brand-system names present in a list (for the filter dropdowns)
+  const brandOptions = (items: { brand_system_name?: string | null }[]) =>
+    Array.from(new Set(items.map(i => i.brand_system_name).filter((n): n is string => !!n))).sort();
+
+  const trendBrands      = brandOptions(data?.score_trend ?? []);
+  const unreviewedBrands = brandOptions(data?.unreviewed_high_risk ?? []);
+  const trendData        = (data?.score_trend ?? []).filter(p => !trendBrand || p.brand_system_name === trendBrand);
+  const unreviewedData   = (data?.unreviewed_high_risk ?? []).filter(u => !unreviewedBrand || u.brand_system_name === unreviewedBrand);
+
+  /* Comparison metrics — score, volume, compliance, improvement, iterations, risk */
+  const compareMetrics: CompareMetric[] = [
+    { key: "score",       label: "Score moyen",         higherIsBetter: true,  format: v => `${Math.round(v)}/100` },
+    { key: "volume",      label: "Volume (analyses)",   higherIsBetter: true,  format: v => `${Math.round(v)}` },
+    { key: "passRate",    label: "Taux de conformité",  higherIsBetter: true,  format: v => `${Math.round(v)}%` },
+    { key: "improvement", label: "Progression moyenne", higherIsBetter: true,  format: v => `${v > 0 ? "+" : ""}${v.toFixed(1)}` },
+    { key: "iterations",  label: "Itérations moyennes", higherIsBetter: false, format: v => v.toFixed(1) },
+    { key: "highRisk",    label: "Risque élevé (nb)",   higherIsBetter: false, format: v => `${Math.round(v)}` },
+    { key: "unreviewed",  label: "Non révisés",         higherIsBetter: false, format: v => `${Math.round(v)}` },
+  ];
+  const compareEntities: CompareEntity[] = (data?.brand_health ?? [])
+    .filter(c => compareSet.has(c.client_id))
+    .map(c => ({
+      key: String(c.client_id),
+      name: c.company_name,
+      metrics: {
+        score: c.avg_score,
+        volume: c.total_analyses,
+        passRate: c.pass_rate ?? 0,
+        improvement: c.avg_improvement ?? 0,
+        iterations: c.avg_iterations ?? 0,
+        highRisk: c.high_risk_count,
+        unreviewed: c.unreviewed_high_risk_count,
+      },
+    }));
 
   return (
     <div className="dashboard-root">
-      <Sidebar nav={nav} />
+      <AppSidebar role="admin" navItems={NAV} />
 
-      <main className="dashboard-main" style={{ background: "#0d1520" }}>
-        {/* ── Header ── */}
-        <div style={{ maxWidth: 1000, marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+      <main style={{ flex: 1, overflowY: "auto", background: "var(--bg)", padding: 28 }}>
+        <div>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
             <div>
-              <h1 style={{ fontFamily: "'Lora', serif", fontSize: 22, fontWeight: 500, color: "#fff", marginBottom: 4 }}>
-                Global Analytics
+              <h1 style={{ fontSize: 22, fontWeight: 600, color: "var(--text)", marginBottom: 4, fontFamily: "'Lora', serif" }}>
+                Tableau de bord
               </h1>
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
-                Real-time intelligence across all client accounts
-              </p>
+
             </div>
-            {/* Tabs */}
-            <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: 4 }}>
-              {(["overview", "history"] as const).map(t => (
-                <button key={t} onClick={() => setTab(t)} style={{
-                  padding: "7px 18px", borderRadius: 7, border: "none",
-                  background: tab === t ? "#2a5298" : "transparent",
-                  color: tab === t ? "#fff" : "rgba(255,255,255,0.4)",
-                  fontFamily: "inherit", fontSize: 12, fontWeight: 500, cursor: "pointer",
-                  textTransform: "capitalize", transition: "all 0.15s",
-                }}>
-                  {t === "overview" ? "📊 Overview" : "📋 History"}
-                </button>
-              ))}
+            <button onClick={() => nav("/admin/clients")} style={{
+              padding: "10px 18px", borderRadius: 10, background: "rgba(78,142,247,0.1)",
+              border: "1px solid rgba(78,142,247,0.2)", color: "#4e8ef7",
+              fontFamily: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}>
+              ◈ Gérer les clients
+            </button>
+          </div>
+
+          {loading && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-dim)", padding: "60px 0" }}>
+              <div className="spinner" style={{ borderTopColor: "#4e8ef7" }} /> Chargement…
             </div>
-          </div>
-        </div>
+          )}
+          {error && <p style={{ color: "var(--danger)", padding: "24px 0" }}>{error}</p>}
 
-        {loading && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: "rgba(255,255,255,0.3)" }}>
-            <div className="spinner" style={{ borderTopColor: "#2a5298", width: 28, height: 28, borderWidth: 3, marginRight: 12 }} />
-            Loading analytics…
-          </div>
-        )}
-        {error && <p style={{ color: "#c0392b", padding: "24px 0" }}>{error}</p>}
+          {!loading && data && (
+            <>
+              {/* ═══ HIGH KPI ROW ═══ */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 16 }}>
+                <StatCard label="Total analyses" value={data.total_analyses} icon="▦" color="#4e8ef7" sub="plateforme" tooltip="Nombre total d'analyses de contenu soumises sur la plateforme, toutes organisations et tous membres confondus." />
 
-        {!loading && stats && (
-          <div style={{ maxWidth: 1000 }}>
+                <StatCard label="Score moyen" value={`${data.avg_score}/100`} icon="◎" color={scoreColor(data.avg_score)} sub="toutes analyses" tooltip="Score de clarté moyen sur l'ensemble des analyses de la plateforme" />
 
-            {/* ════ OVERVIEW TAB ════ */}
-            {tab === "overview" && (
-              <>
-                {/* KPI Row */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 24 }}>
-                  {[
-                    { label: "Total Analyses",    value: stats.total_analyses,       icon: "🔍", color: "#2a5298",  sub: "platform-wide" },
-                    { label: "Avg Clarity Score", value: stats.avg_score !== null ? `${stats.avg_score}` : "—", icon: "✦", color: "#2e7d5e", sub: "out of 100" },
-                    { label: "Active Clients",    value: stats.client_count,          icon: "◈",  color: "#7c3aed", sub: "organisations" },
-                    { label: "Brand Systems",     value: stats.brand_system_count,    icon: "🏷",  color: "#b07d28", sub: "configured" },
-                  ].map(k => (
-                    <div key={k.label} style={{
-                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: 14, padding: "20px 18px 16px", position: "relative", overflow: "hidden",
-                    }}>
-                      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: k.color, opacity: 0.7 }} />
-                      <div style={{ fontSize: "1.5rem", marginBottom: 8 }}>{k.icon}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>{k.label}</div>
-                      <div style={{ fontFamily: "'Lora', serif", fontSize: 34, fontWeight: 500, color: "#fff", lineHeight: 1 }}>{k.value}</div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 6 }}>{k.sub}</div>
-                    </div>
-                  ))}
-                </div>
+                <StatCard label="Clients" value={data.total_clients} icon="◈" color="#7c3aed" sub="organisations" tooltip="Nombre d'organisations clientes actives" />
+                <StatCard
+                  label="Non-révisés"
+                  value={data.unreviewed_count ?? (data.unreviewed_high_risk ?? []).length}
+                  icon="●"
+                  color={(data.unreviewed_count ?? (data.unreviewed_high_risk ?? []).length) > 0 ? "#e05252" : "#2ec88c"}
+                  sub="risques sans suivi"
+                  tooltip="Contenus classés à risque élevé qui n'ont jamais été corrigés ni rouverts après leur première analyse, toutes organisations confondues. Cliquez pour voir la liste."
+                  onClick={() => nav("/unreviewed")}
+                />
+              </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-                  {/* Risk Distribution */}
-                  <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "20px 22px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 18 }}>
-                      Risk Distribution
-                    </div>
-                    {stats.total_analyses === 0 ? (
-                      <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>No analyses yet.</p>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                        {(["Low", "Medium", "High"] as const).map(r => {
-                          const count = stats.risk_distribution[r] ?? 0;
-                          const pct = stats.total_analyses > 0 ? Math.round((count / stats.total_analyses) * 100) : 0;
-                          return (
-                            <div key={r}>
-                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                                <span style={{ fontSize: 12, fontWeight: 600, color: riskCol[r] }}>{r} Risk</span>
-                                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{count} · {pct}%</span>
-                              </div>
-                              <div style={{ height: 7, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
-                                <div style={{ width: `${pct}%`, height: "100%", background: riskCol[r], borderRadius: 4, transition: "width 1s ease", opacity: 0.85 }} />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+              {/* ═══ SECONDARY KPI ROW ═══ */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14, marginBottom: 16 }}>
+                <StatCard
+                  label="Couverture gouvernance"
+                  value={`${data.governance_coverage}%`}
+                  icon="◇"
+                  color={data.governance_coverage >= 75 ? "#2ec88c" : data.governance_coverage >= 40 ? "#f0a832" : "#e05252"}
+                  sub="clients actifs"
+                  tooltip="Part des organisations clientes ayant soumis au moins une analyse. Indique le taux d'adoption réel de la plateforme parmi les clients."
+                />
+                <StatCard
+                  label="Membres"
+                  value={data.total_users}
+                  icon="◫"
+                  color="#7c3aed"
+                  sub="utilisateurs"
+                  tooltip="Nombre total de membres (utilisateurs) sur la plateforme"
+                />
+              </div>
+
+              {/* ═══ BRAND HEALTH TABLE ═══ */}
+              <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 22px", marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px", margin: 0 }}>
+                    Résultat par marque
+                    <InfoTip text="Vue d'ensemble par organisation cliente : nombre d'analyses soumises, score de clarté moyen et nombre de contenus à risque élevé non révisés. Cochez deux marques ou plus pour les comparer." />
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {compareSet.size > 0 && (
+                      <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                        {compareSet.size} sélectionnée{compareSet.size > 1 ? "s" : ""}
+                      </span>
                     )}
-                  </div>
-
-                  {/* Top Clients by Score */}
-                  <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "20px 22px" }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 16 }}>
-                      Clients by Score
-                    </div>
-                    {stats.per_client.length === 0 ? (
-                      <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>No client data yet.</p>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {[...stats.per_client].sort((a, b) => (b.avg_score ?? 0) - (a.avg_score ?? 0)).slice(0, 5).map(c => (
-                          <div key={c.client_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{
-                              width: 28, height: 28, borderRadius: 8,
-                              background: "rgba(42,82,152,0.3)", border: "1px solid rgba(42,82,152,0.4)",
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 11, fontWeight: 700, color: "#7ba7e8", flexShrink: 0,
-                            }}>
-                              {c.company_name.slice(0, 1).toUpperCase()}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.75)", marginBottom: 3 }}>{c.company_name}</div>
-                              <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
-                                <div style={{ width: `${c.avg_score ?? 0}%`, height: "100%", background: scoreColor(c.avg_score), borderRadius: 2, transition: "width 0.8s ease" }} />
-                              </div>
-                            </div>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: scoreColor(c.avg_score), minWidth: 36, textAlign: "right" }}>
-                              {c.avg_score ?? "—"}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <button
+                      disabled={compareSet.size < 2}
+                      onClick={() => setShowCompare(v => !v)}
+                      style={{
+                        fontSize: 11, fontWeight: 600, padding: "6px 12px", borderRadius: 8,
+                        border: "1px solid rgba(78,142,247,0.3)",
+                        background: compareSet.size >= 2 ? "rgba(78,142,247,0.12)" : "transparent",
+                        color: compareSet.size >= 2 ? "#4e8ef7" : "var(--text-dim)",
+                        cursor: compareSet.size >= 2 ? "pointer" : "not-allowed",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      ⇄ {showCompare ? "Masquer la comparaison" : "Comparer"}
+                    </button>
                   </div>
                 </div>
-
-                {/* Per-Client Full Table */}
-                <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "20px 22px" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 16 }}>
-                    Per-Client Breakdown
-                  </div>
-                  {stats.per_client.length === 0 ? (
-                    <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>No clients yet.</p>
-                  ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                {data.brand_health.length === 0
+                  ? <p style={{ fontSize: 12, color: "var(--text-dim)" }}>Aucun client</p>
+                  : (
+                    <table className="doc-table">
                       <thead>
                         <tr>
-                          {["Client", "Analyses", "Avg Score", "Share", "Top Risk"].map(h => (
-                            <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>{h}</th>
-                          ))}
+                          <th style={{ width: 30 }}></th>
+                          <th>Organisation</th><th>Analyses</th><th>Score moy.</th>
+                          <th>Non révisés</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {[...stats.per_client].sort((a, b) => b.total - a.total).map((c, i) => {
-                          const pct = stats.total_analyses > 0 ? Math.round((c.total / stats.total_analyses) * 100) : 0;
-                          const clientAnalyses = analyses.filter(a => a.client_id === c.client_id);
-                          const riskCount = { Low: 0, Medium: 0, High: 0 };
-                          clientAnalyses.forEach(a => { riskCount[a.narrative_risk as keyof typeof riskCount]++; });
-                          const topRisk = Object.entries(riskCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
-                          return (
-                            <tr key={c.client_id} id={`analytics-row-${c.client_id}`}
-                              style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", transition: "background 0.12s", cursor: "pointer" }}
-                              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
-                              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                              <td style={{ padding: "11px 12px", color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <div style={{ width: 24, height: 24, borderRadius: 6, background: `hsl(${(i * 67) % 360}, 40%, 25%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: `hsl(${(i * 67) % 360}, 70%, 75%)` }}>
-                                    {c.company_name.slice(0, 1).toUpperCase()}
-                                  </div>
-                                  {c.company_name}
-                                </div>
-                              </td>
-                              <td style={{ padding: "11px 12px", color: "rgba(255,255,255,0.5)" }}>{c.total}</td>
-                              <td style={{ padding: "11px 12px" }}>
-                                <span style={{ fontSize: 14, fontWeight: 600, color: scoreColor(c.avg_score) }}>{c.avg_score ?? "—"}</span>
-                                {c.avg_score !== null && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginLeft: 2 }}>/100</span>}
-                              </td>
-                              <td style={{ padding: "11px 12px", minWidth: 140 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <div style={{ flex: 1, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.06)" }}>
-                                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: "#2a5298", transition: "width 0.8s ease" }} />
-                                  </div>
-                                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", minWidth: 30 }}>{pct}%</span>
-                                </div>
-                              </td>
-                              <td style={{ padding: "11px 12px" }}>
-                                {topRisk !== "—" && (
-                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 100, background: riskBg[topRisk], color: riskCol[topRisk], border: `1px solid ${riskCol[topRisk]}30` }}>
-                                    {topRisk}
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* ════ HISTORY TAB ════ */}
-            {tab === "history" && (
-              <>
-                {/* Filters */}
-                <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-                  <select value={riskFilter} onChange={e => setRiskFilter(e.target.value)} style={{
-                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 8, color: "rgba(255,255,255,0.6)", fontFamily: "inherit",
-                    fontSize: 12, padding: "7px 12px", outline: "none", cursor: "pointer",
-                  }}>
-                    <option value="">All Risks</option>
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                  </select>
-                  <select value={clientFilter} onChange={e => setClientFilter(e.target.value)} style={{
-                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 8, color: "rgba(255,255,255,0.6)", fontFamily: "inherit",
-                    fontSize: 12, padding: "7px 12px", outline: "none", cursor: "pointer",
-                  }}>
-                    <option value="">All Clients</option>
-                    {Object.entries(clients).map(([id, name]) => (
-                      <option key={id} value={id}>{name}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", marginLeft: "auto" }}>
-                    {filteredAnalyses.length} result{filteredAnalyses.length !== 1 ? "s" : ""}
-                  </div>
-                </div>
-
-                {/* Table */}
-                <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, overflow: "hidden" }}>
-                  {filteredAnalyses.length === 0 ? (
-                    <div style={{ padding: "48px 24px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                      No analyses match your filters.
-                    </div>
-                  ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                      <thead>
-                        <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                          {["Date", "Title", "Client", "Score", "Risk"].map(h => (
-                            <th key={h} style={{ textAlign: "left", padding: "10px 16px", color: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px" }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredAnalyses.map(a => (
-                          <tr key={a.id}
-                            style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", transition: "background 0.12s" }}
-                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
-                            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                            onClick={() => nav(`/analysis/${a.id}`)}>
-                            <td style={{ padding: "11px 16px", color: "rgba(255,255,255,0.3)", fontSize: 11, whiteSpace: "nowrap" }}>
-                              {a.analyzed_at?.slice(0, 10) ?? "—"}
+                        {data.brand_health.map(c => (
+                          <tr key={c.client_id} className="table-row-clickable" onClick={() => nav(`/admin/clients/${c.client_id}`)}>
+                            <td onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={compareSet.has(c.client_id)}
+                                onChange={() => toggleCompare(c.client_id)}
+                                style={{ cursor: "pointer" }}
+                                title="Sélectionner pour comparer"
+                              />
                             </td>
-                            <td style={{ padding: "11px 16px", color: "rgba(255,255,255,0.75)", fontWeight: 500, maxWidth: 280 }}>
-                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {a.message_title}
-                              </div>
-                            </td>
-                            <td style={{ padding: "11px 16px" }}>
-                              <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "rgba(42,82,152,0.2)", color: "#7ba7e8", fontWeight: 500 }}>
-                                {clients[a.client_id] ?? `Client #${a.client_id}`}
+                            <td>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ width: 26, height: 26, borderRadius: 7, background: "rgba(78,142,247,0.12)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#4e8ef7" }}>
+                                  {c.company_name.slice(0, 1).toUpperCase()}
+                                </span>
+                                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{c.company_name}</span>
                               </span>
                             </td>
-                            <td style={{ padding: "11px 16px" }}>
-                              <span style={{ fontSize: 14, fontWeight: 600, color: scoreColor(a.clarity_score) }}>{a.clarity_score}</span>
-                              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginLeft: 2 }}>/100</span>
+                            <td className="td-muted">{c.total_analyses}</td>
+                            <td>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <div style={{ width: 50, height: 4, background: "var(--bg3)", borderRadius: 2, overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: `${c.avg_score}%`, background: scoreColor(c.avg_score), borderRadius: 2 }} />
+                                </div>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: scoreColor(c.avg_score) }}>{c.avg_score}</span>
+                              </div>
                             </td>
-                            <td style={{ padding: "11px 16px" }}>
-                              <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 100, background: riskBg[a.narrative_risk] ?? "transparent", color: riskCol[a.narrative_risk] ?? "white", border: `1px solid ${riskCol[a.narrative_risk] ?? "#fff"}30` }}>
-                                {a.narrative_risk}
+                            <td>
+                              <span style={{ padding: "2px 10px", borderRadius: 100, background: c.unreviewed_high_risk_count > 0 ? "rgba(224,82,82,0.12)" : "rgba(46,200,140,0.12)", color: c.unreviewed_high_risk_count > 0 ? "#e05252" : "#2ec88c", fontWeight: 600, fontSize: 12 }}>
+                                {c.unreviewed_high_risk_count}
                               </span>
                             </td>
                           </tr>
@@ -385,11 +505,114 @@ export default function AdminAnalytics() {
                       </tbody>
                     </table>
                   )}
+              </div>
+
+              {/* ═══ BRAND SYSTEM COMPARISON ═══ */}
+              {showCompare && compareEntities.length >= 2 && (
+                <ComparisonPanel
+                  title="Comparaison des marques"
+                  subtitle="Tête-à-tête : score, volume, conformité, progression, itérations et risque"
+                  accentColor="#4e8ef7"
+                  entities={compareEntities}
+                  metrics={compareMetrics}
+                  onRemove={key => toggleCompare(Number(key))}
+                  onClose={() => setShowCompare(false)}
+                />
+              )}
+
+              {/* ═══ MEMBER LEADERBOARD ═══ */}
+              {/* Member activity & performance — who submits the most, and at what quality */}
+              <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 22px", marginBottom: 16 }}>
+                <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                  Activité &amp; performance par membre
+                  <InfoTip text="Membres les plus actifs et leur score de clarté moyen, toutes organisations confondues. Permet de repérer les champions et les membres ayant besoin de formation." />
+                </p>
+                <p style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 14 }}>
+                  Membres les plus actifs et leur score moyen — repère champions et besoins de formation.
+                </p>
+                {(data.per_user ?? []).length === 0
+                  ? <p style={{ fontSize: 12, color: "var(--text-dim)" }}>Aucune activité enregistrée.</p>
+                  : (
+                    <table className="doc-table">
+                      <thead><tr><th>Membre</th><th>Organisation</th><th>Analyses</th><th>Score moy.</th></tr></thead>
+                      <tbody>
+                        {data.per_user.slice(0, 8).map(u => (
+                          <tr key={u.user}>
+                            <td className="td-bold" style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.user}</td>
+                            <td className="td-muted" style={{ maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.company_name}</td>
+                            <td className="td-muted">{u.count}</td>
+                            <td><span style={{ color: scoreColor(u.avg_score), fontWeight: 700, fontSize: 13 }}>{u.avg_score}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+              </div>
+
+              {/* ═══ ANALYSIS VOLUME OVER TIME (per brand system) ═══ */}
+              <TimelineVolumeChart
+                title="Nombre d'analyses par période"
+                infoText="Volume d'analyses soumises au fil du temps. Choisissez le pas (jour, semaine, mois, année), filtrez par marque ou restreignez à une plage de dates."
+                items={allAnalyses.map(a => ({ analyzed_at: a.analyzed_at, series: a.brand_system_name }))}
+                seriesLabel="Toutes les marques"
+                accentColor="#4e8ef7"
+                barColor="#4e8ef7"
+              />
+
+              {/* ═══ API TOKEN CONSUMPTION ═══ */}
+              <TokenPanel />
+
+              {/* ═══ TREND + DISTRIBUTION ═══ */}
+              <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 14, marginBottom: 16 }}>
+                <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 22px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12 }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px", margin: 0 }}>
+                      Tendance globale des scores
+                      <InfoTip text="Évolution chronologique des scores de clarté analyse par analyse. Filtrez par marque ; cliquez sur une barre pour ouvrir l'analyse correspondante." />
+                    </p>
+                    <BrandFilter value={trendBrand} options={trendBrands} onChange={setTrendBrand} />
+                  </div>
+                  <MiniChart data={trendData} onBarClick={(id) => nav(`/analysis/${id}`)} />
                 </div>
-              </>
-            )}
-          </div>
-        )}
+                <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 22px" }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 16 }}>
+                    Distribution des scores
+                    <InfoTip align="right" text="Répartition des analyses par tranche de score : Critique (0-25), Faible (25-50), Acceptable (50-75) et Conforme (75-100)." />
+                  </p>
+                  <DonutChart dist={data.score_distribution} total={data.total_analyses} />
+                </div>
+              </div>
+
+              {/* ═══ UNREVIEWED HIGH RISK ═══ */}
+              {(data.unreviewed_high_risk ?? []).length > 0 && (
+                <div id="unreviewed-section" style={{ background: "var(--bg2)", border: "1px solid rgba(224,82,82,0.2)", borderRadius: 16, padding: "20px 22px", marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12 }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: "#e05252", textTransform: "uppercase", letterSpacing: "0.8px", margin: 0 }}>
+                      Soumissions à risque élevé non révisées — toutes organisations
+                    </p>
+                    <BrandFilter value={unreviewedBrand} options={unreviewedBrands} onChange={setUnreviewedBrand} />
+                  </div>
+                  <table className="doc-table">
+                    <thead><tr><th>Date</th><th>Titre</th><th>Auteur</th><th>Score</th></tr></thead>
+                    <tbody>
+                      {unreviewedData.map(u => (
+                        <tr key={u.id} style={{ cursor: "pointer" }} onClick={() => nav(`/analysis/${u.id}`)}>
+                          <td className="td-muted">{u.date}</td>
+                          <td className="td-bold" style={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.title}</td>
+                          <td className="td-muted">{u.author || "—"}</td>
+                          <td><span style={{ padding: "2px 10px", borderRadius: 100, background: "rgba(224,82,82,0.15)", color: "#e05252", fontWeight: 700, fontSize: 13 }}>{u.score}</span></td>
+                        </tr>
+                      ))}
+                      {unreviewedData.length === 0 && (
+                        <tr><td colSpan={4} className="td-muted" style={{ padding: "14px 0" }}>Aucune soumission pour cette marque.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </main>
     </div>
   );

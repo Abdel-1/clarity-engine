@@ -1,92 +1,207 @@
 """
-Brand field extractor from raw document text.
-Uses Groq to intelligently parse brand identity information from unstructured content.
+brand_extractor_service.py — Clarity Engine Brand Extraction v1
+────────────────────────────────────────────────────────────────
+Extracts structured brand fields from raw document text using DeepSeek.
+
+Schema (v1):
+  nom_marque, role_marque, master_statement, priorites_strategiques,
+  territoires_narratifs, ton_marque, lignes_rouges, mots_a_privilegier,
+  mots_a_eviter, audiences_cles, contexte_sectoriel, champs_manquants
+
+The prompt is versioned in app/prompts/brand_system_extraction_prompt.py.
 """
 import json
-from groq import Groq
-from app.core.config import settings
+from typing import Any
 
-BRAND_FIELDS = [
-    "brand_name", "brand_role", "master_statement",
-    "priorities", "territories", "tone", "red_lines",
-    "words_preferred", "words_avoid", "audiences", "sector",
+from app.lib.deepseek import call_deepseek
+from app.prompts.brand_system_extraction_prompt import (
+    EXTRACTION_SYSTEM_PROMPT,
+    EXTRACTION_VERSION,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schema definition
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Fields that must be plain strings
+_STRING_FIELDS = [
+    "nom_marque",
+    "role_marque",
+    "master_statement",
+    "ton_marque",
+    "contexte_sectoriel",
 ]
 
-EXTRACTION_SYSTEM_PROMPT = """You are an expert brand strategist and analyst.
-You receive raw text extracted from brand identity documents (brand books, brand platforms, positioning guides, verbal identity guides, etc.).
+# Fields that must be arrays of strings
+_ARRAY_FIELDS = [
+    "priorites_strategiques",
+    "territoires_narratifs",
+    "lignes_rouges",
+    "mots_a_privilegier",
+    "mots_a_eviter",
+    "audiences_cles",
+    "champs_manquants",
+]
 
-Your job is to extract ALL brand information and structure it into specific fields.
+_ALL_FIELDS = _STRING_FIELDS + _ARRAY_FIELDS
 
-EXTRACTION RULES:
-1. Be EXHAUSTIVE — do not summarize or shorten. Use the exact words, formulations, lists and sentences from the documents.
-2. For lists (priorities, territories, audiences, vocabulary) → format as numbered or bullet lists preserving ALL items.
-3. For multi-paragraph fields (brand_role, tone) → preserve the full paragraphs.
-4. red_lines = things the brand must NEVER say, do, or be confused with.
-5. words_preferred = exact vocabulary words/expressions to use.
-6. words_avoid = exact words/expressions to avoid.
-7. master_statement = the brand's tagline, signature, or positioning statement.
-8. If a field is genuinely not found in the documents → return exactly: "Non spécifié dans les documents fournis."
-9. NEVER invent or hallucinate. Only extract what is explicitly written.
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation & coercion
+# ─────────────────────────────────────────────────────────────────────────────
 
-Return ONLY valid JSON with exactly these 11 keys:
-{
-  "brand_name": "...",
-  "brand_role": "...",
-  "master_statement": "...",
-  "priorities": "...",
-  "territories": "...",
-  "tone": "...",
-  "red_lines": "...",
-  "words_preferred": "...",
-  "words_avoid": "...",
-  "audiences": "...",
-  "sector": "..."
-}"""
+def _coerce(raw: dict) -> dict:
+    """
+    Coerce the LLM output to the exact schema.
+    - String fields: stringify if needed, default to ""
+    - Array fields:  listify if needed (split strings by newline), default to []
+    Does not raise — invalid values become safe defaults.
+    """
+    result: dict[str, Any] = {}
 
+    for field in _STRING_FIELDS:
+        val = raw.get(field, "")
+        if isinstance(val, list):
+            val = "\n".join(str(v) for v in val)
+        result[field] = str(val) if val is not None else ""
+
+    for field in _ARRAY_FIELDS:
+        val = raw.get(field, [])
+        if isinstance(val, str):
+            # Model returned a string — split into list items
+            val = [v.strip() for v in val.splitlines() if v.strip()]
+        elif not isinstance(val, list):
+            val = []
+        result[field] = [str(item) for item in val]
+
+    return result
+
+
+def _validate(data: dict) -> None:
+    """
+    Raise ValueError if any required key is missing or has the wrong type.
+    """
+    missing_keys = [f for f in _ALL_FIELDS if f not in data]
+    if missing_keys:
+        raise ValueError(f"Missing keys in LLM response: {missing_keys}")
+
+    for f in _STRING_FIELDS:
+        if not isinstance(data[f], str):
+            raise ValueError(f"Field '{f}' must be a string, got {type(data[f])}")
+
+    for f in _ARRAY_FIELDS:
+        if not isinstance(data[f], list):
+            raise ValueError(f"Field '{f}' must be a list, got {type(data[f])}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Repair prompt (single retry)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REPAIR_SUFFIX = """
+
+---
+Le JSON précédent était invalide ou incomplet.
+Renvoie UNIQUEMENT un objet JSON valide respectant le schéma exact spécifié.
+Tous les champs doivent être présents. Chaînes vides "" et tableaux vides [] si absent.
+Pas de texte avant ni après."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public interface
+# ─────────────────────────────────────────────────────────────────────────────
 
 def extract_brand_fields(combined_text: str) -> dict:
     """
-    Call Groq to extract structured brand fields from raw document text.
-    Returns a dict with all brand fields.
-    """
-    groq_client = Groq(api_key=settings.GROQ_API_KEY)
+    Send combined document text to DeepSeek and extract structured brand fields.
 
-    # Groq llama-3.3-70b-versatile has 128K context. We send up to 80K chars (~20K tokens).
-    # This ensures virtually no truncation for standard brand documents.
-    MAX_CHARS = 80_000
+    Returns a dict matching the v1 schema (all keys guaranteed present).
+    Includes 'champs_manquants' listing fields the model left empty.
+    Also returns 'extraction_version' for traceability.
+
+    Raises:
+        ValueError: if both attempts (initial + repair) fail to produce valid JSON.
+    """
+    # ── Input trimming ───────────────────────────────────────────────────────
+    # Keep at most 20K chars (≈ 5K tokens) of the document.
+    # Brand system data is almost always in the first/last pages.
+    # Sending 80K chars is 4× slower for no accuracy gain on structured docs.
+    MAX_CHARS = 20_000
     if len(combined_text) > MAX_CHARS:
-        # Keep the beginning AND the end (intros + conclusions are most info-dense)
         half = MAX_CHARS // 2
         combined_text = (
             combined_text[:half]
-            + "\n\n[... middle section truncated for length ...]\n\n"
+            + "\n\n[... section centrale omise ...]\n\n"
             + combined_text[-half:]
         )
 
-    user_content = f"=== BRAND DOCUMENTS ===\n\n{combined_text}"
+    user_content = f"=== DOCUMENT(S) DE MARQUE ===\n\n{combined_text}"
 
+    # Extraction output budget — a full brand system JSON is ~800-1500 tokens.
+    # 1600 covers the largest real outputs with headroom while capping runaway
+    # generation. (Was 8192.)
+    EXTRACTION_MAX_TOKENS = 1600
+
+    # ── Attempt 1: direct call ──────────────────────────────────────────────
+    raw_text = ""
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            temperature=0.05,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user",   "content": user_content},
-            ],
-            max_tokens=4096,
+        raw_text = call_deepseek(
+            system=EXTRACTION_SYSTEM_PROMPT,
+            user=user_content,
+            max_tokens=EXTRACTION_MAX_TOKENS,
         )
-        raw = response.choices[0].message.content
-        result = json.loads(raw)
+        data = json.loads(raw_text)
+        data = _coerce(data)
+        _validate(data)
+        data["extraction_version"] = EXTRACTION_VERSION
+        return data
+    except Exception:
+        pass  # fall through to repair attempt
 
-        # Ensure all keys exist
-        for field in BRAND_FIELDS:
-            if field not in result:
-                result[field] = ""
+    # ── Attempt 2: repair (ask model to fix its own JSON) ───────────────────
+    repair_user = user_content + _REPAIR_SUFFIX
+    try:
+        raw_text = call_deepseek(
+            system=EXTRACTION_SYSTEM_PROMPT,
+            user=repair_user,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+        )
+        data = json.loads(raw_text)
+        data = _coerce(data)
+        _validate(data)
+        data["extraction_version"] = EXTRACTION_VERSION
+        return data
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Brand extraction failed: LLM returned invalid JSON after repair attempt. "
+            f"Error: {exc}. Raw: {raw_text[:300]}"
+        )
+    except Exception as exc:
+        raise ValueError(f"Brand extraction failed after repair: {exc}")
 
-        return result
 
-    except json.JSONDecodeError as e:
-        raise ValueError(f"AI returned invalid JSON: {e}")
-    except Exception as e:
-        raise ValueError(f"Brand extraction failed: {e}")
+# ─────────────────────────────────────────────────────────────────────────────
+# Field name mapping (new schema → legacy DB column names)
+# Used by the route to persist data into the BrandSystem model.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def map_to_db_fields(extracted: dict) -> dict:
+    """
+    Map the v1 extraction schema to the BrandSystem DB column names.
+    Array fields are joined as bullet lists for storage.
+    """
+    def join_list(lst: list) -> str:
+        return "\n".join(f"- {item}" for item in lst) if lst else ""
+
+    return {
+        "brand_name":      extracted.get("nom_marque", ""),
+        "brand_role":      extracted.get("role_marque", ""),
+        "master_statement": extracted.get("master_statement", ""),
+        "priorities":      join_list(extracted.get("priorites_strategiques", [])),
+        "territories":     join_list(extracted.get("territoires_narratifs", [])),
+        "tone":            extracted.get("ton_marque", ""),
+        "red_lines":       join_list(extracted.get("lignes_rouges", [])),
+        "words_preferred": join_list(extracted.get("mots_a_privilegier", [])),
+        "words_avoid":     join_list(extracted.get("mots_a_eviter", [])),
+        "audiences":       join_list(extracted.get("audiences_cles", [])),
+        "sector":          extracted.get("contexte_sectoriel", ""),
+    }

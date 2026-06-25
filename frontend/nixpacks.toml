@@ -1,0 +1,16 @@
+# Railway / Nixpacks — static React (Vite) frontend service.
+# Set this folder (frontend/) as the service "Root Directory" in Railway.
+# Build produces dist/, then `serve` hosts it as an SPA (deep links fall back
+# to index.html so React Router works on refresh).
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { logout } from "../services/auth";
 import logoSvg from "../assets/logo.svg";
 
-const API = "http://127.0.0.1:8000/api";
+const API = (import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000") + "/api";
 
 interface ClientRow {
   id: number; company_name: string; sector: string | null;
@@ -19,13 +19,13 @@ interface GlobalStats {
 
 const scoreColor = (s: number) => s >= 75 ? "#2e7d5e" : s >= 50 ? "#b07d28" : "#c0392b";
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 const NAV = [
-  { path: "/admin", label: "🛡 Admin Panel" },
+  { path: "/admin", label: "Admin Panel" },
   { path: "/",      label: "Dashboard" },
 ];
 
@@ -208,7 +208,7 @@ export default function AdminDashboard() {
           {/* Top scorers global */}
           {stats && stats.top_scorers?.length > 0 && (
             <div className="result-card" style={{ marginTop: 16, padding: "16px 20px" }}>
-              <p className="result-section-title" style={{ marginBottom: 10 }}>🏆 Contenus 95%+ (global)</p>
+              <p className="result-section-title" style={{ marginBottom: 10 }}>Contenus 95%+ (global)</p>
               {stats.top_scorers.map((t, i) => (
                 <div key={i} style={{ display: "flex", gap: 12, padding: "7px 0", borderBottom: i < stats.top_scorers.length - 1 ? "1px solid var(--border)" : "none" }}>
                   <span style={{ fontFamily: "'Lora',serif", fontWeight: 600, color: "#2e7d5e", minWidth: 50 }}>{t.score}/100</span>

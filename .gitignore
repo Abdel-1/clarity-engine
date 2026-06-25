@@ -21,9 +21,22 @@ var/
 *.egg
 venv/
 .venv/
+venv_win/
+ENV/
+
+# Node / frontend build
+node_modules/
+dist/
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Environment Variables
 .env
+.env.*
+!.env.example
 
 # Database
 *.db

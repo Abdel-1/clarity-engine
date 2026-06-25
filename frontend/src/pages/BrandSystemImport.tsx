@@ -1,44 +1,123 @@
-import { useState, useRef, DragEvent } from "react";
+import { useState, useRef } from "react";
+import type { DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { importBrandFromFiles, createBrandSystem } from "../services/brandSystems";
-import logoSvg from "../assets/logo.svg";
-import { logout } from "../services/auth";
+import { extractBrandSystem, createBrandSystem, type ExtractionResult } from "../services/brandSystems";
+import AppSidebar from "../components/AppSidebar";
 
 const NAV = [
-  { path: "/",                   label: "Dashboard" },
-  { path: "/analyze",            label: "Analyser" },
-  { path: "/brand-system/new",   label: "Brand Systems" },
-  { path: "/brand-system/import",label: "Importer un Brand" },
-  { path: "/history",            label: "Historique" },
+  { path: "/brand/dashboard", label: "Tableau de bord", icon: "⬡" },
+  { path: "/brand/users",     label: "Équipe",           icon: "◎" },
+  { path: "/history",         label: "Historique",       icon: "◷" },
 ];
 
-const FIELDS: { key: string; label: string; required?: boolean; rows?: number }[] = [
-  { key: "brand_name",       label: "Nom du Brand",          required: true,  rows: 1 },
-  { key: "brand_role",       label: "Brand Role",            required: true,  rows: 4 },
-  { key: "master_statement", label: "Master Statement",      required: true,  rows: 2 },
-  { key: "priorities",       label: "Priorités Stratégiques",required: true,  rows: 5 },
-  { key: "territories",      label: "Territoires Narratifs", required: true,  rows: 5 },
-  { key: "tone",             label: "Ton de la Marque",      required: true,  rows: 4 },
-  { key: "red_lines",        label: "Lignes Rouges",         required: true,  rows: 4 },
-  { key: "words_preferred",  label: "Mots Préférés",                          rows: 3 },
-  { key: "words_avoid",      label: "Mots à Éviter",                          rows: 3 },
-  { key: "audiences",        label: "Audiences Cibles",                       rows: 3 },
-  { key: "sector",           label: "Secteur",                                rows: 1 },
+/* ── Field definitions (v1 schema → display) ─────────────────────── */
+type FieldDef = {
+  key:       string;   // key in ExtractionResult.data
+  dbKey:     string;   // key for createBrandSystem payload
+  label:     string;
+  required?: boolean;
+  isArray:   boolean;  // array field → joined for display, shown as textarea
+  rows:      number;
+};
+
+const FIELDS: FieldDef[] = [
+  { key: "nom_marque",              dbKey: "brand_name",      label: "Nom de la marque",         required: true,  isArray: false, rows: 1 },
+  { key: "role_marque",             dbKey: "brand_role",      label: "Rôle de la marque",         required: true,  isArray: false, rows: 4 },
+  { key: "master_statement",        dbKey: "master_statement",label: "Déclaration maîtresse",     required: true,  isArray: false, rows: 2 },
+  { key: "priorites_strategiques",  dbKey: "priorities",      label: "Priorités stratégiques",   required: true,  isArray: true,  rows: 6 },
+  { key: "territoires_narratifs",   dbKey: "territories",     label: "Territoires narratifs",    required: true,  isArray: true,  rows: 6 },
+  { key: "ton_marque",              dbKey: "tone",            label: "Ton de la marque",         required: true,  isArray: false, rows: 4 },
+  { key: "lignes_rouges",           dbKey: "red_lines",       label: "Lignes rouges",            required: true,  isArray: true,  rows: 5 },
+  { key: "mots_a_privilegier",      dbKey: "words_preferred", label: "Mots à privilégier",                        isArray: true,  rows: 4 },
+  { key: "mots_a_eviter",           dbKey: "words_avoid",     label: "Mots à éviter",                             isArray: true,  rows: 4 },
+  { key: "audiences_cles",          dbKey: "audiences",       label: "Audiences clés",                            isArray: true,  rows: 4 },
+  { key: "contexte_sectoriel",      dbKey: "sector",          label: "Contexte sectoriel",                        isArray: false, rows: 2 },
 ];
 
 type Step = "upload" | "review" | "saving" | "done";
 
+/* ── Helper: array field → display string ──────────────────────────── */
+function arrayToText(arr: string[]): string {
+  return arr.map(s => `- ${s}`).join("\n");
+}
+
+/* ── Extraction summary banner ─────────────────────────────────────── */
+function ExtractionBanner({ result }: { result: ExtractionResult }) {
+  const missing = result.data.champs_manquants ?? [];
+  return (
+    <div style={{
+      background: "var(--bg2)", border: "1px solid var(--border)",
+      borderRadius: 10, padding: "16px 20px", marginBottom: 24,
+    }}>
+      <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", letterSpacing: 0.5 }}>Sources</p>
+          <p style={{ fontSize: 13, color: "var(--text)", marginTop: 4, fontWeight: 500 }}>{result.sources.join(", ")}</p>
+        </div>
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", letterSpacing: 0.5 }}>Volume extrait</p>
+          <p style={{ fontSize: 13, color: "var(--text)", marginTop: 4, fontWeight: 500 }}>{result.char_count.toLocaleString()} caractères</p>
+        </div>
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", letterSpacing: 0.5 }}>Prompt v{result.extraction_version}</p>
+          <p style={{ fontSize: 13, color: "var(--text)", marginTop: 4, fontWeight: 500 }}>DeepSeek v4-pro</p>
+        </div>
+        <div style={{ marginLeft: "auto" }}>
+          <span style={{
+            background: "rgba(46,125,94,0.1)", color: "var(--success)",
+            borderRadius: 100, padding: "4px 14px", fontSize: 11, fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: "0.5px"
+          }}>✓ Extraction réussie</span>
+        </div>
+      </div>
+
+      {missing.length > 0 && (
+        <div style={{
+          marginTop: 14, padding: "12px 14px",
+          background: "rgba(176,125,40,0.07)", borderRadius: 8,
+          border: "1px solid rgba(176,125,40,0.18)",
+        }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: "var(--warn)", marginBottom: 6 }}>
+            {missing.length} champ{missing.length > 1 ? "s" : ""} absent{missing.length > 1 ? "s" : ""} du document — à compléter manuellement :
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {missing.map(m => (
+              <span key={m} style={{
+                background: "rgba(176,125,40,0.12)", color: "var(--warn)",
+                borderRadius: 4, padding: "2px 10px", fontSize: 11, fontWeight: 600
+              }}>{m}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {result.errors?.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          {result.errors.map((w, i) => (
+            <p key={i} style={{ fontSize: 12, color: "var(--warn)" }}>{w}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Main component ────────────────────────────────────────────────── */
 export default function BrandSystemImport() {
   const nav = useNavigate();
-  const [step, setStep]           = useState<Step>("upload");
-  const [files, setFiles]         = useState<File[]>([]);
-  const [dragging, setDragging]   = useState(false);
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState("");
-  const [sources, setSources]     = useState<string[]>([]);
-  const [charCount, setCharCount] = useState(0);
-  const [warnings, setWarnings]   = useState<string[]>([]);
-  const [form, setForm]           = useState<Record<string, string>>({});
+
+  const [step, setStep]         = useState<Step>("upload");
+  const [files, setFiles]       = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+
+  const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
+  // form values: key = FieldDef.key, value = text (arrays joined with \n)
+  const [form, setForm]             = useState<Record<string, string>>({});
+  // set of extraction keys that are in champs_manquants
+  const [missingKeys, setMissingKeys] = useState<Set<string>>(new Set());
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   /* ── File helpers ── */
@@ -67,11 +146,19 @@ export default function BrandSystemImport() {
     if (!files.length) { setError("Ajoutez au moins un fichier."); return; }
     setLoading(true); setError("");
     try {
-      const result = await importBrandFromFiles(files);
-      setForm(result.data);
-      setSources(result.sources);
-      setCharCount(result.char_count);
-      setWarnings(result.errors || []);
+      const result = await extractBrandSystem(files);
+      setExtraction(result);
+
+      // Build form state — array fields joined as bullet lines
+      const initial: Record<string, string> = {};
+      for (const fd of FIELDS) {
+        const raw = result.data[fd.key as keyof typeof result.data];
+        initial[fd.key] = fd.isArray
+          ? arrayToText(raw as string[])
+          : (raw as string) ?? "";
+      }
+      setForm(initial);
+      setMissingKeys(new Set(result.data.champs_manquants ?? []));
       setStep("review");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Extraction échouée.");
@@ -80,12 +167,23 @@ export default function BrandSystemImport() {
 
   /* ── Save ── */
   const handleSave = async () => {
-    if (!form.brand_name?.trim()) { setError("Le nom du brand est requis."); return; }
+    if (!form["nom_marque"]?.trim()) {
+      setError("Le nom de la marque est requis."); return;
+    }
     setStep("saving");
     try {
-      const res = await createBrandSystem(form);
+      // Build DB payload: array fields → bullet-list strings
+      const payload: Record<string, string> = {};
+      for (const fd of FIELDS) {
+        payload[fd.dbKey] = form[fd.key] ?? "";
+      }
+      if (extraction) {
+        payload.source_file = extraction.sources.join(", ");
+        payload.raw_extraction_json = JSON.stringify(extraction.data, null, 2);
+      }
+      await createBrandSystem(payload);
       setStep("done");
-      setTimeout(() => nav(`/brand-system/${res.id}/edit`), 1800);
+      setTimeout(() => nav("/admin/clients"), 1800);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Sauvegarde échouée.");
       setStep("review");
@@ -93,63 +191,59 @@ export default function BrandSystemImport() {
   };
 
   const fmtSize = (b: number) =>
-    b < 1024 ? `${b} B` : b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(1)} MB`;
+    b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+
+  const isMissing = (key: string) => missingKeys.has(key);
 
   /* ── Render ── */
   return (
     <div className="dashboard-root">
-      {/* Sidebar */}
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <img src={logoSvg} alt="Zone Bleue" style={{ height: 30, maxWidth: "100%" }} />
-        </div>
-        <nav className="sidebar-nav">
-          <div style={{ marginBottom: 6, padding: "0 8px", fontSize: 10, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.9px" }}>
-            Navigation
-          </div>
-          {NAV.map(n => (
-            <a key={n.path} href={n.path}
-              className={`nav-item${n.path === "/brand-system/import" ? " active" : ""}`}
-              onClick={e => { e.preventDefault(); nav(n.path); }}>
-              {n.label}
-            </a>
-          ))}
-        </nav>
-        <button className="logout-btn" onClick={() => { logout(); window.location.href = "/login"; }}>
-          Sign Out
-        </button>
-      </aside>
+      <AppSidebar role="brand_admin" navItems={NAV} />
 
-      {/* Main */}
       <main className="dashboard-main">
-        <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <div className="page-content">
 
           {/* Header */}
-          <div className="page-header">
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
             <div>
-              <h1 className="page-title">Importer un Brand System</h1>
-              <p className="page-sub">
-                Uploadez vos documents de marque — l'IA extrait automatiquement tous les champs.
+              <h1 className="dash-title" style={{ marginBottom: 6 }}>Importer un Brand System</h1>
+              <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+                Uploadez vos documents — DeepSeek extrait automatiquement tous les champs.
               </p>
             </div>
-            <a href="/brand-system/new" className="btn-ghost"
-              onClick={e => { e.preventDefault(); nav("/brand-system/new"); }}>
-              Créer manuellement →
-            </a>
+            <button className="btn-ghost" onClick={() => nav(-1)}>← Retour</button>
           </div>
 
           {/* Step indicator */}
-          <div className="step-indicator" style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 32 }}>
             {[
-              { id: "upload", label: "1. Upload documents" },
+              { id: "upload", label: "1. Documents" },
               { id: "review", label: "2. Vérifier & éditer" },
               { id: "done",   label: "3. Enregistré" },
-            ].map(s => (
-              <div key={s.id} className={`step-dot ${step === s.id ? "active" : (step === "done" && s.id !== "done") || (step === "review" && s.id === "upload") ? "done" : ""}`}>
-                <span className="step-num">{s.id === "upload" ? "1" : s.id === "review" ? "2" : "✓"}</span>
-                <span>{s.label}</span>
-              </div>
-            ))}
+            ].map((s, idx) => {
+              const isActive = step === s.id || (step === "saving" && s.id === "review");
+              const isDone   = (step === "review" || step === "saving" || step === "done") && s.id === "upload"
+                            || step === "done" && s.id === "review";
+              return (
+                <div key={s.id} style={{
+                  flex: 1, padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: isActive ? "var(--gold-dim)" : "var(--bg2)",
+                  border: isActive ? "1px solid var(--gold)" : "1px solid var(--border)",
+                  color: isActive ? "var(--gold)" : isDone ? "var(--success)" : "var(--text-dim)",
+                }}>
+                  <span style={{
+                    width: 20, height: 20, borderRadius: "50%", fontSize: 11,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: isActive ? "var(--gold)" : isDone ? "var(--success)" : "var(--bg3)",
+                    color: isActive || isDone ? "var(--bg)" : "var(--text-dim)",
+                  }}>
+                    {isDone ? "✓" : idx + 1}
+                  </span>
+                  {s.label}
+                </div>
+              );
+            })}
           </div>
 
           {/* ── STEP 1: Upload ── */}
@@ -163,56 +257,80 @@ export default function BrandSystemImport() {
                 onDrop={onDrop}
                 onClick={() => inputRef.current?.click()}
               >
-                <div className="dropzone-icon">📄</div>
+                <div className="dropzone-icon">▤</div>
                 <p className="dropzone-title">
                   {dragging ? "Relâchez pour ajouter…" : "Glissez vos fichiers ici"}
                 </p>
                 <p className="dropzone-sub">ou cliquez pour sélectionner</p>
-                <p className="dropzone-hint">PDF · DOCX · TXT · MD — plusieurs fichiers acceptés</p>
-                <input ref={inputRef} type="file" multiple
+                <p className="dropzone-hint">PDF · DOCX · TXT · MD</p>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  multiple
                   accept=".pdf,.docx,.txt,.md"
+                  id="brand-file-input"
                   style={{ display: "none" }}
-                  onChange={e => addFiles(e.target.files)} />
+                  onChange={e => addFiles(e.target.files)}
+                />
               </div>
 
               {/* File list */}
               {files.length > 0 && (
-                <div className="result-card" style={{ marginTop: 16 }}>
-                  <p className="result-section-title">
+                <div className="result-card" style={{ marginTop: 20, padding: 20 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 14 }}>
                     {files.length} fichier{files.length > 1 ? "s" : ""} sélectionné{files.length > 1 ? "s" : ""}
                   </p>
-                  {files.map(f => (
-                    <div key={f.name} className="import-file-row">
-                      <span className="import-file-icon">
-                        {f.name.endsWith(".pdf") ? "📕" : f.name.endsWith(".docx") ? "📘" : "📄"}
-                      </span>
-                      <span className="import-file-name">{f.name}</span>
-                      <span className="import-file-size">{fmtSize(f.size)}</span>
-                      <button className="import-file-rm" onClick={e => { e.stopPropagation(); removeFile(f.name); }}>
-                        ×
-                      </button>
-                    </div>
-                  ))}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {files.map(f => (
+                      <div key={f.name} className="import-file-row">
+                        <span className="import-file-icon">
+                          ▤
+                        </span>
+                        <span className="import-file-name">{f.name}</span>
+                        <span className="import-file-size">{fmtSize(f.size)}</span>
+                        <button
+                          className="import-file-rm"
+                          onClick={e => { e.stopPropagation(); removeFile(f.name); }}
+                          title="Retirer"
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
+              {error && (
+                <div className="form-error" style={{ marginTop: 14 }}>❌ {error}</div>
+              )}
 
-              <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
-                <button className="btn-primary btn-analyze" onClick={handleExtract} disabled={loading || !files.length}>
-                  {loading
-                    ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Extraction en cours…</>
-                    : "🔍 Extraire les données du brand"}
-                </button>
-              </div>
+              <button
+                id="extract-brand-btn"
+                className="btn-primary"
+                onClick={handleExtract}
+                disabled={loading || !files.length}
+                style={{ width: "100%", marginTop: 24, height: 50, fontSize: 15, justifyContent: "center" }}
+              >
+                {loading ? (
+                  <><span className="spinner" style={{ borderTopColor: "#fff" }} /> Extraction en cours…</>
+                ) : (
+                  <>✦ Extraire les données du Brand System</>
+                )}
+              </button>
 
               {loading && (
-                <div className="import-progress-card">
-                  <div className="spinner" style={{ width: 20, height: 20, borderWidth: 3, borderTopColor: "var(--accent)" }} />
+                <div style={{
+                  marginTop: 16, padding: "16px 20px",
+                  background: "var(--bg2)", borderRadius: 10,
+                  display: "flex", gap: 14, alignItems: "center",
+                  border: "1px solid var(--border)"
+                }}>
+                  <div className="spinner spinner-lg" />
                   <div>
-                    <p style={{ fontWeight: 500, color: "var(--text)", fontSize: 14 }}>Analyse IA en cours…</p>
-                    <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                      Extraction du texte → Groq analyse les documents → Structuration des champs
+                    <p style={{ fontWeight: 600, color: "var(--text)", fontSize: 14 }}>
+                      DeepSeek analyse vos documents…
+                    </p>
+                    <p style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+                      Extraction des champs d'identité de marque en cours.
                     </p>
                   </div>
                 </div>
@@ -220,70 +338,123 @@ export default function BrandSystemImport() {
             </div>
           )}
 
-          {/* ── STEP 2: Review ── */}
-          {(step === "review" || step === "saving") && (
+          {/* ── STEP 2: Review & edit ── */}
+          {(step === "review" || step === "saving") && extraction && (
             <div>
-              {/* Extraction summary */}
-              <div className="import-summary-card">
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-dim)" }}>Sources</p>
-                    <p style={{ fontSize: 13, color: "var(--text)", marginTop: 2 }}>{sources.join(", ")}</p>
-                  </div>
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-dim)" }}>Texte extrait</p>
-                    <p style={{ fontSize: 13, color: "var(--text)", marginTop: 2 }}>{charCount.toLocaleString()} caractères</p>
-                  </div>
-                  <div style={{ marginLeft: "auto" }}>
-                    <span style={{ background: "rgba(46,125,94,0.1)", color: "#2e7d5e", border: "1px solid rgba(46,125,94,0.25)", borderRadius: 100, padding: "3px 12px", fontSize: 12, fontWeight: 600 }}>
-                      ✓ Extraction complète
-                    </span>
-                  </div>
+              <ExtractionBanner result={extraction} />
+
+              {/* Extraction assistant notice */}
+              <div style={{
+                display: "flex", alignItems: "flex-start", gap: 12,
+                background: "rgba(201,164,73,0.06)", border: "1px solid var(--gold-border)",
+                borderRadius: 10, padding: "14px 18px", marginBottom: 24,
+              }}>
+                <span style={{ fontSize: "1.3rem", flexShrink: 0 }}>▤</span>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
+                    Extraction assistée — vérification humaine requise
+                  </p>
+                  <p style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.6 }}>
+                    Relisez et corrigez chaque champ avant d'enregistrer.
+                    Les champs surlignés en orange sont absents du document : complétez-les manuellement.
+                    L'enregistrement ne crée pas de nouveau Brand System si un système actif existe déjà pour ce client.
+                  </p>
                 </div>
-                {warnings.length > 0 && (
-                  <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(176,125,40,0.06)", border: "1px solid rgba(176,125,40,0.2)", borderRadius: "var(--radius-xs)" }}>
-                    {warnings.map((w, i) => <p key={i} style={{ fontSize: 12, color: "var(--warn)" }}>⚠ {w}</p>)}
-                  </div>
-                )}
               </div>
 
               {/* Editable form */}
-              <div className="result-card" style={{ marginTop: 16 }}>
-                <p className="result-section-title">Données extraites — vérifiez et ajustez si nécessaire</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {FIELDS.map(f => (
-                    <div key={f.key} className="form-field">
-                      <label className="form-label">
-                        {f.label}
-                        {f.required && <span className="required-star">*</span>}
-                      </label>
-                      {f.rows === 1
-                        ? <input className="form-input" type="text"
-                            value={form[f.key] || ""}
-                            onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} />
-                        : <textarea className="form-textarea form-input"
-                            rows={f.rows}
-                            style={{ minHeight: (f.rows || 3) * 24 + 18 }}
-                            value={form[f.key] || ""}
-                            onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} />
-                      }
-                    </div>
-                  ))}
+              <div className="result-card" style={{ padding: 28 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 24 }}>
+                  Révision des données extraites
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+                  {FIELDS.map(fd => {
+                    const missing = isMissing(fd.key);
+                    return (
+                      <div key={fd.key}>
+                        <label
+                          htmlFor={`field-${fd.key}`}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            fontSize: 12, fontWeight: 700,
+                            color: missing ? "var(--warn)" : "var(--text-muted)",
+                            marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4,
+                          }}
+                        >
+                          {fd.label}
+                          {fd.required && <span style={{ color: "var(--danger)" }}>*</span>}
+                          {missing && (
+                            <span style={{
+                              fontSize: 10, background: "rgba(176,125,40,0.12)",
+                              color: "var(--warn)", borderRadius: 4,
+                              padding: "1px 8px", fontWeight: 700, textTransform: "uppercase",
+                              letterSpacing: 0.5,
+                            }}>
+                              À compléter
+                            </span>
+                          )}
+                          {fd.isArray && !missing && (
+                            <span style={{ fontSize: 10, color: "var(--text-dim)", fontWeight: 400, textTransform: "none" }}>
+                              une entrée par ligne, préfixe « - »
+                            </span>
+                          )}
+                        </label>
+                        {fd.rows === 1 ? (
+                          <input
+                            id={`field-${fd.key}`}
+                            type="text"
+                            value={form[fd.key] ?? ""}
+                            onChange={e => setForm(p => ({ ...p, [fd.key]: e.target.value }))}
+                            style={{
+                              width: "100%", boxSizing: "border-box",
+                              background: missing ? "rgba(176,125,40,0.06)" : "var(--bg3)",
+                              border: `1px solid ${missing ? "rgba(176,125,40,0.4)" : "var(--border)"}`,
+                              borderRadius: 8, padding: "10px 14px",
+                              color: "var(--text)", outline: "none",
+                            }}
+                          />
+                        ) : (
+                          <textarea
+                            id={`field-${fd.key}`}
+                            rows={fd.rows}
+                            value={form[fd.key] ?? ""}
+                            onChange={e => setForm(p => ({ ...p, [fd.key]: e.target.value }))}
+                            style={{
+                              width: "100%", boxSizing: "border-box",
+                              background: missing ? "rgba(176,125,40,0.06)" : "var(--bg3)",
+                              border: `1px solid ${missing ? "rgba(176,125,40,0.4)" : "var(--border)"}`,
+                              borderRadius: 8, padding: "12px 14px",
+                              color: "var(--text)", outline: "none",
+                              resize: "vertical", fontFamily: "inherit",
+                              lineHeight: 1.6, minHeight: fd.rows * 22,
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
+              {error && <div className="form-error" style={{ marginTop: 14 }}>❌ {error}</div>}
 
-              <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "space-between" }}>
-                <button className="btn-ghost" onClick={() => { setStep("upload"); setError(""); }}>
+              <div style={{ display: "flex", gap: 12, marginTop: 28, justifyContent: "space-between" }}>
+                <button
+                  className="btn-ghost"
+                  onClick={() => { setStep("upload"); setError(""); setExtraction(null); }}
+                >
                   ← Recommencer
                 </button>
-                <button className="btn-primary btn-analyze"
+                <button
+                  id="save-brand-btn"
+                  className="btn-primary"
                   onClick={handleSave}
-                  disabled={step === "saving"}>
+                  disabled={step === "saving"}
+                  style={{ minWidth: 220, justifyContent: "center" }}
+                >
                   {step === "saving"
-                    ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Enregistrement…</>
-                    : "💾 Enregistrer le Brand System"}
+                    ? <><span className="spinner" style={{ borderTopColor: "#fff" }} /> Enregistrement…</>
+                    : "Valider et enregistrer"}
                 </button>
               </div>
             </div>
@@ -291,13 +462,14 @@ export default function BrandSystemImport() {
 
           {/* ── STEP 3: Done ── */}
           {step === "done" && (
-            <div className="empty-cta" style={{ marginTop: 16, background: "rgba(46,125,94,0.06)", border: "1.5px solid rgba(46,125,94,0.25)" }}>
-              <div style={{ fontSize: "2.5rem" }}>✅</div>
-              <p style={{ fontFamily: "'Lora',serif", fontSize: 18, color: "var(--text)", fontWeight: 500 }}>
+            <div className="empty-cta" style={{ marginTop: 40, padding: 60 }}>
+              <div style={{ fontSize: "4rem", marginBottom: 24 }}>✅</div>
+              <h2 style={{ fontFamily: "'Lora', serif", fontSize: 24, color: "var(--text)", marginBottom: 12 }}>
                 Brand System enregistré !
-              </p>
-              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                Redirection vers la fiche pour révision finale…
+              </h2>
+              <p style={{ color: "var(--text-dim)", fontSize: 15, maxWidth: 400, margin: "0 auto" }}>
+                Votre identité de marque a été créée avec succès.<br />
+                Redirection vers la liste des clients…
               </p>
             </div>
           )}

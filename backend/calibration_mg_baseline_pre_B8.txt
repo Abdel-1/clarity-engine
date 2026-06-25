@@ -1,0 +1,100 @@
+Brand system source : fixture dict  ·  runs/case = 3
+
+==============================================================================================================================================
+  RAPPORT DE CALIBRATION — MG Maroc  (20 cas · Δglobal ≤ 8, Δsub ≤ 3, risk exact)
+  Brand-agnostic : analyze() reçoit le brand system de MG Maroc ; aucune logique de marque codée en dur.
+==============================================================================================================================================
+ID  G_cib  G_obt    ΔG   Risk_cib   Risk_obt  Cla(T→O)  Ali(T→O)  Foc(T→O)  Ton(T→O)  Nar(T→O)      STATUT
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+01     95     95    +0        Low        Low  18→19  20→20  18→19  19→18  20→19          OK
+02     90     90    +0        Low        Low  18→18  19→19  17→18  18→18  18→17          OK
+03     87     90    +3        Low        Low  17→18  18→19  17→18  18→18  17→17          OK
+04     89     95    +6        Low        Low  17→19  18→20  18→19  19→19  17→18          OK
+05     88     90    +2        Low        Low  18→18  18→19  17→18  17→17  18→18          OK
+06     90     95    +5        Low        Low  17→19  19→20  17→19  18→18  19→19          OK
+07     85     90    +5        Low        Low  17→18  18→19  17→18  16→17  17→18          OK
+08     18     18    +0       High       High   7→8    1→2    8→5    1→1    1→2           OK
+09     39     42    +3       High       High  13→12   4→2   10→10   7→8    5→10!  HORS BANDE
+10     33     42    +9       High       High  12→12   2→2    9→10   6→8    4→10!  HORS BANDE
+11     35     42    +7       High       High  13→13   3→5   11→11   5→8    3→5           OK
+12     41     55   +14       High       High  14→14   4→5   11→12   9→13!   3→11!  HORS BANDE
+13     44     55   +11       High       High  13→14   6→5   11→14   9→13!   5→9 !  HORS BANDE
+14     62     58    -4     Medium     Medium  16→18   9→9   16→11!  12→11   9→9   HORS BANDE
+15     64     72    +8     Medium     Medium  16→16  11→14  14→15  14→14   9→13!  HORS BANDE
+16     47     53    +6       High       High  15→17   4→5   13→16   8→8    7→7           OK
+17     67     82   +15     Medium        Low!  17→18  11→16!  15→17  13→16  11→15!  HORS BANDE
+18     34     41    +7       High       High  13→13   3→5   12→14   1→2    5→7           OK
+19     37     38    +1       High       High  14→18!   2→2   12→14   6→2 !   3→2   HORS BANDE
+20     89     90    +1        Low        Low  18→18  18→19  17→18  18→17  18→18          OK
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  CERTAINS CAS HORS BANDE
+==============================================================================================================================================
+
+RÉPÉTABILITÉ — MG Maroc (5 cas variés ×3, spread ≤ 1 par sous-score, risk identique) :
+  [01] OK
+  [17] HORS BANDE : alignment=[16, 14, 12]; tone=[16, 16, 13]; narrative_contribution=[15, 17, 14]; risk=['Low', 'Medium']
+  [16] OK
+  [12] OK
+  [15] OK
+  ⚠ Instabilité détectée — vérifier temperature=0 / top_p=1 dans app/lib/deepseek.py.
+
+ROBUSTESSE PARAPHRASE — « Message central MG reformulé 3× (même sens) » (global stable à ±8) :
+  variante 1 : global=85
+  variante 2 : global=90
+  variante 3 : global=90
+  spread = 5  →  OK ✓
+
+PAIRES DE CONTRASTE (cohérence du SENS des écarts) :
+  [OK ] #02 objection assumée  ≫  #09 objection défensive (global, écart ≥ 30)  —  #02=90 − #09=42 = 48
+  [OK ] #02 objection assumée  ≫  #10 « Made in China » (global, écart ≥ 30)  —  #02=90 − #10=42 = 48
+  [OK ] Tone(#04 Cyberster sobre)  −  Tone(#18 Cyberster clinquant)  ≥ 10  —  Tone #04=19 − #18=2 = 17
+  [OK ] #05/#03 (émotion+preuve, Low)  >  #14/#17 (preuve sans émotion, Medium)  —  min(L)=90 vs max(M)=82
+  [OK ] #14/#17 (Medium)  >  #08/#11 (hype, High)  —  min(M)=58 vs max(H)=42
+
+CROSS-BRAND — même message générique, deux brand systems différents :
+  Message : « Nous préférons la sobriété à l'esbroufe : des faits, des preuves, et rien de superflu. »
+  [MG Maroc    ] global= 85  Ton=18  Ali=18  risk=Low
+  [Technopark  ] global= 85  Ton=17  Ali=16  risk=Low
+  Décision : scores DIFFÉRENTS ✓ (le moteur lit le brand system)
+
+SENSIBILITÉ MÉTADONNÉES (même message, métadonnées différentes → scores divergents ; médiane de 3 runs/branche) :
+
+  A) Teaser émotionnel — PR/Instagram vs Communiqué (global doit diverger ≥ 10)
+    [PR / Instagram        ] global= 93  Ton=19  Foc=19  Ali=19  risk=Low
+    [Communiqué presse     ] global= 90  Ton=18  Foc=18  Ali=19  risk=Low
+    → ASSERTION KO ✗ : global PR=93 − communiqué=90 = 3 (attendu ≥ 10)
+    DIAGNOSTIC — bloc métadonnées réellement envoyé au modèle :
+      MÉTADONNÉES
+      ───────────
+      Audience               : Le Passion Collector
+      Canal                  : PR / Instagram
+      Objectif               : Halo de marque (désirabilité)
+      Type de prise de parole: Post désirabilité
+      Date                   : 2026-06-16
+      Auteur                 : [non spécifié]
+
+  B) Message factuel — Communiqué vs Instagram (Tone communiqué − Instagram ≥ 3)
+    [Communiqué presse     ] global= 80  Ton=16  Foc=17  Ali=14  risk=Low
+    [Instagram             ] global= 58  Ton=11  Foc=11  Ali= 9  risk=Medium
+    → ASSERTION OK ✓ : Tone communiqué=16 − Instagram=11 = 5 (attendu ≥ 3)
+
+  C) Sensibilité audience — message famille pour Famille vs Passion Collector (global Famille > Collector)
+    [Audience Famille      ] global= 90  Ton=17  Foc=18  Ali=19  risk=Low
+    [Audience Collector    ] global= 85  Ton=17  Foc=17  Ali=16  risk=Low
+    → ASSERTION OK ✓ : global Famille=90 vs Collector=85
+
+==============================================================================================================================================
+  LATENCE — 60 appels
+  p50= 15.36s  p95= 29.10s  min= 11.84s  max= 32.10s  moy= 17.65s
+==============================================================================================================================================
+
+==============================================================================================================================================
+  SCORECARD
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [FAIL] Bande (20 cas) — MG Maroc
+  [FAIL] Répétabilité (spread ≤ 1, risk stable)
+  [PASS] Robustesse paraphrase (global ±8)
+  [PASS] Paires de contraste (sens des écarts)
+  [PASS] Cross-brand (MG Maroc ≠ Technopark)
+  [FAIL] Sensibilité métadonnées (canal/audience)
+==============================================================================================================================================

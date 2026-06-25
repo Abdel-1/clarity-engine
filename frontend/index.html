@@ -1,11 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Clarity Engine</title>
-    <meta name="description" content="AI-powered document intelligence platform" />
+    <title>Clarity Engine — Corporate Clarity Index</title>
+    <meta name="description" content="Plateforme de gouvernance de communication de marque alimentée par l'IA." />
+
+    <!-- Google Fonts: DM Serif Display + DM Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Pre-React dark theme: eliminates flash of light background on /login -->
+    <script>
+      (function() {
+        const path = window.location.pathname;
+        const alwaysDark = path === '/login' || path.startsWith('/login');
+        const stored = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = alwaysDark ? 'dark' : (stored || (prefersDark ? 'dark' : 'light'));
+        document.documentElement.classList.remove('dark', 'light');
+        document.documentElement.classList.add(theme);
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -1,3 +1,4 @@
+import React from "react";
 import { Navigate } from "react-router-dom";
 import { isAuthenticated, isAdmin, isBrandAdmin } from "../services/auth";
 
@@ -10,10 +11,8 @@ import { isAuthenticated, isAdmin, isBrandAdmin } from "../services/auth";
  */
 export default function ProtectedRoute({
   children,
-  adminOnly = false,
 }: {
-  children: JSX.Element;
-  adminOnly?: boolean;
+  children: React.ReactElement;
 }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (isAdmin())          return <Navigate to="/admin/clients"    replace />;

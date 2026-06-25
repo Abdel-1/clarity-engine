@@ -22,5 +22,13 @@ class BrandSystem(Base):
     sector            = Column(String, nullable=True)
 
     is_active         = Column(Boolean, default=True)
+    # When False, the admin has suspended analysis for this brand system (e.g. it
+    # consumed too many tokens). No member can analyse against it until re-enabled.
+    analysis_enabled  = Column(Boolean, default=True, nullable=False)
     created_at        = Column(DateTime, default=datetime.utcnow)
     created_by        = Column(String, nullable=True)
+
+    # Traceability for imported brand systems
+    source_file         = Column(String, nullable=True)
+    raw_extraction_json = Column(Text,   nullable=True)
+

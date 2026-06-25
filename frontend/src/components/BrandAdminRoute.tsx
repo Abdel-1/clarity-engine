@@ -1,3 +1,4 @@
+import React from "react";
 import { Navigate } from "react-router-dom";
 import { isAuthenticated, isAdmin, isBrandAdmin } from "../services/auth";
 
@@ -8,7 +9,7 @@ import { isAuthenticated, isAdmin, isBrandAdmin } from "../services/auth";
  * - client            → /              (no access to brand admin panel)
  * - brand_admin       → renders children
  */
-export default function BrandAdminRoute({ children }: { children: JSX.Element }) {
+export default function BrandAdminRoute({ children }: { children: React.ReactElement }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (isAdmin())          return <Navigate to="/admin/clients" replace />;
   if (!isBrandAdmin())    return <Navigate to="/" replace />;

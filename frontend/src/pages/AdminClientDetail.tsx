@@ -3,8 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { logout } from "../services/auth";
 import logoSvg from "../assets/logo.svg";
 
-const API = "http://127.0.0.1:8000/api";
-function authHeaders() {
+const API = (import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000") + "/api";
+function authHeaders(): Record<string, string> {
   const t = localStorage.getItem("token");
   return t ? { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
@@ -134,7 +134,7 @@ export default function AdminClientDetail() {
   const openEditBS = (bs: BrandSystemRow) => {
     setEditingBS(bs);
     const form: Record<string, string> = {};
-    BS_FIELDS.forEach(f => { form[f.key] = (bs as Record<string, unknown>)[f.key] as string || ""; });
+    BS_FIELDS.forEach(f => { form[f.key] = (bs as unknown as Record<string, string>)[f.key] || ""; });
     setBsForm(form);
     setShowBSForm(true);
   };
@@ -177,7 +177,7 @@ export default function AdminClientDetail() {
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn-ghost" onClick={() => setEditClient(v => !v)}>
-                {editClient ? "Annuler" : "✏️ Modifier"}
+                {editClient ? "Annuler" : "Modifier"}
               </button>
             </div>
           </div>
@@ -334,7 +334,7 @@ export default function AdminClientDetail() {
                       </div>
                       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                         <button className="btn-ghost" style={{ fontSize: 12, padding: "4px 12px" }}
-                          onClick={() => openEditBS(bs)}>✏️ Modifier</button>
+                          onClick={() => openEditBS(bs)}>Modifier</button>
                         {bs.is_active && (
                           <button className="btn-ghost" style={{ fontSize: 12, padding: "4px 12px", color: "#c0392b", borderColor: "rgba(192,57,43,0.3)" }}
                             onClick={() => deleteBrandSystem(bs.id)}>Désactiver</button>
@@ -375,7 +375,7 @@ export default function AdminClientDetail() {
                         <td>
                           <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
                             onClick={() => { setResetUserId(u.id); setNewPass(""); }}>
-                            🔑 Réinitialiser MDP
+                            Réinitialiser MDP
                           </button>
                         </td>
                       </tr>

@@ -1,29 +1,31 @@
-import { useState, useRef, DragEvent } from "react";
+import { useState, useRef } from "react";
+import type { DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { getToken, logout } from "../../services/auth";
-import logoSvg from "../../assets/logo.svg";
+import { getToken } from "../../services/auth";
+import AppSidebar from "../../components/AppSidebar";
 
-const API = "http://127.0.0.1:8000";
+const API = (import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000");
 
-const NAV_ADMIN = [
-  { path: "/admin/clients",   label: "Clients",   icon: "◈" },
-  { path: "/admin/analytics", label: "Analytics", icon: "✦" },
+const NAV = [
+  { path: "/admin/clients",   label: "Clients",     icon: "◈" },
+  { path: "/admin/analytics", label: "Analytiques", icon: "✦" },
+  { path: "/history",         label: "Historique",  icon: "◷" },
 ];
 
-const STEP_LABELS = ["Organisation", "Brand System", "Credentials"];
+const STEP_LABELS = ["Organisation", "Brand System", "Identifiants"];
 
 const BS_FIELDS: { key: string; label: string; required?: boolean; rows: number; ph: string }[] = [
-  { key: "brand_name",       label: "Brand Name",              required: true,  rows: 1, ph: "e.g. TechnoPark" },
-  { key: "brand_role",       label: "Brand Role",              required: true,  rows: 3, ph: "What the brand stands for" },
-  { key: "master_statement", label: "Master Statement",        required: true,  rows: 2, ph: "Core brand promise" },
-  { key: "priorities",       label: "Strategic Priorities",    required: true,  rows: 4, ph: "Key focus areas" },
-  { key: "territories",      label: "Narrative Territories",   required: true,  rows: 4, ph: "Brand narrative territories" },
-  { key: "tone",             label: "Tone of Voice",           required: true,  rows: 3, ph: "e.g. Expert, Inspiring, Clear" },
-  { key: "red_lines",        label: "Red Lines",               required: true,  rows: 3, ph: "What the brand must never do" },
-  { key: "words_preferred",  label: "Preferred Words",         required: false, rows: 2, ph: "Comma-separated preferred vocabulary" },
-  { key: "words_avoid",      label: "Words to Avoid",          required: false, rows: 2, ph: "Comma-separated words to avoid" },
-  { key: "audiences",        label: "Target Audiences",        required: false, rows: 2, ph: "e.g. Startups, SMEs, Investors" },
-  { key: "sector",           label: "Sector",                  required: false, rows: 1, ph: "e.g. Technology, Finance" },
+  { key: "brand_name",       label: "Nom de marque",           required: true,  rows: 1, ph: "ex. TechnoPark" },
+  { key: "brand_role",       label: "Rôle de la marque",       required: true,  rows: 3, ph: "Ce que représente la marque" },
+  { key: "master_statement", label: "Promesse principale",     required: true,  rows: 2, ph: "Promesse centrale de la marque" },
+  { key: "priorities",       label: "Priorités stratégiques", required: true,  rows: 4, ph: "Axes stratégiques clés" },
+  { key: "territories",      label: "Territoires narratifs",   required: true,  rows: 4, ph: "Territoires de communication" },
+  { key: "tone",             label: "Ton de voix",             required: true,  rows: 3, ph: "ex. Expert, Inspirant, Clair" },
+  { key: "red_lines",        label: "Lignes rouges",           required: true,  rows: 3, ph: "Ce que la marque ne doit jamais faire" },
+  { key: "words_preferred",  label: "Mots préférés",          required: false, rows: 2, ph: "Vocabulaire privilégié, séparé par des virgules" },
+  { key: "words_avoid",      label: "Mots à éviter",           required: false, rows: 2, ph: "Mots à éviter, séparés par des virgules" },
+  { key: "audiences",        label: "Audiences cibles",        required: false, rows: 2, ph: "ex. Startups, PME, Investisseurs" },
+  { key: "sector",           label: "Secteur",                 required: false, rows: 1, ph: "ex. Technologie, Finance" },
 ];
 
 type BsMode = "manual" | "import";
@@ -66,16 +68,23 @@ export default function ClientCreate() {
 
   const tok = () => ({ "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` });
 
-  // ── Step 1 → create org ──────────────────────────────────────────────
+  // ── Step 1 → create org only (no user yet) ───────────────────────────
   async function handleCreateClient(e: React.FormEvent) {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const r = await fetch(`${API}/api/admin/clients`, {
+      // Use the lightweight /org endpoint — creates only the Client record,
+      // no user credentials required at this stage.
+      const r = await fetch(`${API}/api/admin/clients/org`, {
         method: "POST", headers: tok(),
         body: JSON.stringify({ company_name: companyName, sector: sector || null }),
       });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Failed to create client");
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${r.status}: Failed to create organisation`);
+      }
       const data = await r.json();
+      // Backend returns { id, company_name, sector, created_at }
+      if (!data.id) throw new Error("Server returned no client id — check backend logs.");
       setClientId(data.id);
       setStep(2);
     } catch (err: any) { setError(err.message); }
@@ -135,9 +144,9 @@ export default function ClientCreate() {
         return;
       }
 
-      console.log(`POSTing brand system for client ${clientId} to ${API}/api/admin/clients/${clientId}/brand-system`, payload);
+      console.log(`POSTing brand system for client ${clientId} to ${API}/api/admin/clients/${clientId}/brand-systems`, payload);
 
-      const r = await fetch(`${API}/api/admin/clients/${clientId}/brand-system`, {
+      const r = await fetch(`${API}/api/admin/clients/${clientId}/brand-systems`, {
         method: "POST", headers: tok(),
         body: JSON.stringify(payload),
       });
@@ -151,6 +160,7 @@ export default function ClientCreate() {
         throw new Error(detail);
       }
 
+      if (!fullName) setFullName(companyName);
       setStep(3);
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
@@ -160,7 +170,10 @@ export default function ClientCreate() {
   async function handleProvisionUser(e: React.FormEvent) {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const r = await fetch(`${API}/api/admin/clients/${clientId}/users`, {
+      if (!clientId) {
+        throw new Error("No organisation created yet — please restart from Step 1.");
+      }
+      const r = await fetch(`${API}/api/admin/clients/${clientId}/brand-admins`, {
         method: "POST", headers: tok(),
         body: JSON.stringify({ email, password, full_name: fullName || null }),
       });
@@ -182,39 +195,14 @@ export default function ClientCreate() {
 
   return (
     <div className="dashboard-root">
-      {/* Dark admin sidebar */}
-      <aside className="sidebar" style={{ background: "linear-gradient(180deg, #0f1923 0%, #131f2e 100%)", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-        <div className="sidebar-brand" style={{ background: "rgba(42,82,152,0.15)", borderBottom: "1px solid rgba(255,255,255,0.06)", padding: "18px 16px" }}>
-          <img src={logoSvg} alt="Zone Bleue" style={{ height: 30, maxWidth: "100%", filter: "brightness(1.8)" }} />
-          <div style={{ marginTop: 8, fontSize: 10, fontWeight: 700, color: "rgba(253,211,53,0.8)", textTransform: "uppercase", letterSpacing: "1.2px" }}>
-            Admin Panel
-          </div>
-        </div>
-        <nav className="sidebar-nav" style={{ padding: "16px 10px" }}>
-          {NAV_ADMIN.map(n => (
-            <a key={n.path} href={n.path} id={`nav-${n.label.toLowerCase()}`}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, marginBottom: 2, textDecoration: "none", fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.55)", background: "transparent", border: "1px solid transparent", transition: "all 0.15s" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = "#fdd335"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = "rgba(255,255,255,0.55)"; }}
-              onClick={e => { e.preventDefault(); nav(n.path); }}>
-              <span style={{ fontSize: "1rem" }}>{n.icon}</span> {n.label}
-            </a>
-          ))}
-        </nav>
-        <button style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "12px 16px", background: "none", border: "none", borderTop: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.35)", fontFamily: "inherit", fontSize: 13, cursor: "pointer", transition: "color 0.15s" }}
-          onMouseEnter={e => (e.currentTarget.style.color = "#c0392b")}
-          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
-          onClick={() => { logout(); window.location.href = "/login"; }}>
-          ⎋ Sign Out
-        </button>
-      </aside>
+      <AppSidebar role="admin" navItems={NAV} />
 
       <main className="dashboard-main">
-        <div className="page-content" style={{ maxWidth: 700 }}>
+        <div className="page-content">
           <header className="dash-header" style={{ marginBottom: 24 }}>
             <div>
-              <h1 className="dash-title">New Client Account</h1>
-              <p className="dash-subtitle">Step {step} of 3 — {STEP_LABELS[step - 1]}</p>
+              <h1 className="dash-title">Nouveau compte client</h1>
+              <p className="dash-subtitle">Étape {step} sur 3 — {STEP_LABELS[step - 1]}</p>
             </div>
           </header>
 
@@ -249,7 +237,7 @@ export default function ClientCreate() {
                 <input id="sector" className="form-input" type="text" value={sector} onChange={e => setSector(e.target.value)} placeholder="e.g. Technology, Finance" />
               </div>
               <button id="btn-create-org" type="submit" className="btn-primary" disabled={loading} style={{ alignSelf: "flex-start", minWidth: 180 }}>
-                {loading ? "Creating…" : "Create Organisation →"}
+                {loading ? "Création…" : "Créer l'organisation →"}
               </button>
             </form>
           )}
@@ -266,7 +254,7 @@ export default function ClientCreate() {
                     color: bsMode === m ? "#fff" : "var(--text-muted)",
                     fontFamily: "inherit", fontSize: 13, fontWeight: 500, transition: "all 0.15s",
                   }}>
-                    {m === "manual" ? "✏️ Manual Input" : "📄 Upload PDF / Doc"}
+                    {m === "manual" ? "Saisie manuelle" : "Importer PDF / Doc"}
                   </button>
                 ))}
               </div>
@@ -275,7 +263,7 @@ export default function ClientCreate() {
               {bsMode === "manual" && (
                 <form className="result-card" onSubmit={handleProvisionBrand} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Fill in the brand governance parameters — all fields can be edited after creation.
+                    Renseignez les paramètres de gouvernance de marque — tous les champs peuvent être édités après création.
                   </p>
                   {BS_FIELDS.map(f => (
                     <div key={f.key}>
@@ -294,10 +282,14 @@ export default function ClientCreate() {
                       }
                     </div>
                   ))}
-                  <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
-                    <button type="button" className="btn-ghost" onClick={() => setStep(1)}>← Back</button>
+                  <div style={{ display: "flex", gap: 10, paddingTop: 4, flexWrap: "wrap" }}>
+                    <button type="button" className="btn-ghost" onClick={() => setStep(1)}>← Retour</button>
                     <button id="btn-save-brand-manual" type="submit" className="btn-primary" disabled={loading} style={{ minWidth: 180 }}>
-                      {loading ? "Saving…" : "Save Brand System →"}
+                      {loading ? "Enregistrement…" : "Enregistrer le Brand System →"}
+                    </button>
+                    <button type="button" className="btn-ghost" style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}
+                      onClick={() => { setError(""); setStep(3); }}>
+                      Passer pour l'instant →
                     </button>
                   </div>
                 </form>
@@ -317,10 +309,10 @@ export default function ClientCreate() {
                         onDrop={(e: DragEvent<HTMLDivElement>) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
                         onClick={() => fileRef.current?.click()}
                       >
-                        <div className="dropzone-icon">📄</div>
-                        <p className="dropzone-title">{dragging ? "Drop to add…" : "Drag your brand documents here"}</p>
-                        <p className="dropzone-sub">or click to browse</p>
-                        <p className="dropzone-hint">PDF · DOCX · TXT · MD — multiple files accepted</p>
+                        <div className="dropzone-icon">▤</div>
+                        <p className="dropzone-title">{dragging ? "Déposez ici…" : "Glissez vos documents ici"}</p>
+                        <p className="dropzone-sub">ou cliquez pour parcourir</p>
+                        <p className="dropzone-hint">PDF · DOCX · TXT · MD — plusieurs fichiers acceptés</p>
                         <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.txt,.md"
                           style={{ display: "none" }} onChange={e => addFiles(e.target.files)} />
                       </div>
@@ -330,7 +322,7 @@ export default function ClientCreate() {
                           <p className="result-section-title">{files.length} file{files.length > 1 ? "s" : ""} selected</p>
                           {files.map(f => (
                             <div key={f.name} className="import-file-row">
-                              <span className="import-file-icon">{f.name.endsWith(".pdf") ? "📕" : f.name.endsWith(".docx") ? "📘" : "📄"}</span>
+                              <span className="import-file-icon">▤</span>
                               <span className="import-file-name">{f.name}</span>
                               <span className="import-file-size">{fmtSize(f.size)}</span>
                               <button className="import-file-rm" onClick={e => { e.stopPropagation(); setFiles(p => p.filter(x => x.name !== f.name)); }}>×</button>
@@ -352,9 +344,9 @@ export default function ClientCreate() {
                       )}
 
                       <div style={{ display: "flex", gap: 10 }}>
-                        <button type="button" className="btn-ghost" onClick={() => setStep(1)}>← Back</button>
+                        <button type="button" className="btn-ghost" onClick={() => setStep(1)}>← Retour</button>
                         <button className="btn-primary" onClick={handleExtract} disabled={extracting || !files.length} style={{ minWidth: 200 }}>
-                          {extracting ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Extracting…</> : "🔍 Extract Brand Data"}
+                          {extracting ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Extraction…</> : "Extraire les données"}
                         </button>
                       </div>
                     </>
@@ -380,7 +372,7 @@ export default function ClientCreate() {
                         </div>
                         {warnings.length > 0 && (
                           <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(176,125,40,0.06)", border: "1px solid rgba(176,125,40,0.2)", borderRadius: "var(--radius-xs)" }}>
-                            {warnings.map((w, i) => <p key={i} style={{ fontSize: 12, color: "var(--warn)" }}>⚠ {w}</p>)}
+                            {warnings.map((w, i) => <p key={i} style={{ fontSize: 12, color: "var(--warn)" }}>{w}</p>)}
                           </div>
                         )}
                       </div>
@@ -407,9 +399,9 @@ export default function ClientCreate() {
                       </div>
 
                       <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-                        <button type="button" className="btn-ghost" onClick={() => setImportStep("upload")}>← Re-upload</button>
+                      <button type="button" className="btn-ghost" onClick={() => setImportStep("upload")}>← Re-upload</button>
                         <button id="btn-save-brand-import" type="submit" className="btn-primary" disabled={loading || importStep === "saving"} style={{ minWidth: 200 }}>
-                          {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Saving…</> : "💾 Save Brand System →"}
+                          {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} /> Enregistrement…</> : "Enregistrer le Brand System →"}
                         </button>
                       </div>
                     </form>
@@ -423,7 +415,7 @@ export default function ClientCreate() {
           {step === 3 && !success && (
             <form className="result-card" onSubmit={handleProvisionUser} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>
-                These credentials will be used by the client to log in to their panel.
+                Ces identifiants seront utilisés par le client pour se connecter à son espace.
               </p>
               <div>
                 <label className="form-label" htmlFor="user-email">Email <span style={{ color: "var(--danger)" }}>*</span></label>
@@ -438,9 +430,9 @@ export default function ClientCreate() {
                 <input id="user-fullname" className="form-input" type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="e.g. Marie Dupont" />
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" className="btn-ghost" onClick={() => setStep(2)}>← Back</button>
+                <button type="button" className="btn-ghost" onClick={() => setStep(2)}>← Retour</button>
                 <button id="btn-provision-user" type="submit" className="btn-primary" disabled={loading} style={{ minWidth: 160 }}>
-                  {loading ? "Creating…" : "Provision Login ✓"}
+                  {loading ? "Création…" : "Activer l'accès ✓"}
                 </button>
               </div>
             </form>
